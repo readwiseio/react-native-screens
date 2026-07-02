@@ -1,2 +1,6 @@
 # specific for windows script files
 *.bat text eol=crlf
+
+# Readwise: lib/ is committed build output (git-dependency installs skip prepare);
+# collapse it in PR diffs.
+lib/** linguist-generated=true
