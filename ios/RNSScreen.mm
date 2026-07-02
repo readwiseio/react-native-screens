@@ -1313,7 +1313,6 @@ RNS_IGNORE_SUPER_CALL_END
   }
 
   if (newScreenProps.zoomDismissEdgeOnly != oldScreenProps.zoomDismissEdgeOnly) {
-    NSLog(@"RNSZOOM prop zoomDismissEdgeOnly -> %d", newScreenProps.zoomDismissEdgeOnly);
     [self setZoomDismissEdgeOnly:newScreenProps.zoomDismissEdgeOnly];
   }
 

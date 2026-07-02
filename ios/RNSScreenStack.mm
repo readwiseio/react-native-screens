@@ -1143,15 +1143,6 @@ RNS_IGNORE_SUPER_CALL_END
   }
   BOOL edgeOnly = _zoomSwipeEdgeOnly;
   if (gestureRecognizer.state != UIGestureRecognizerStateChanged) {
-    NSLog(
-        @"RNSZOOM swipe state=%ld latchedEdgeOnly=%d liveEdgeOnly=%d tx=%.1f ty=%.1f coordinator=%d interaction=%d",
-        (long)gestureRecognizer.state,
-        edgeOnly,
-        topScreen.zoomDismissEdgeOnly,
-        translation.x,
-        translation.y,
-        _controller.transitionCoordinator != nil,
-        _interactionController != nil);
   }
 
   float dragDistance = edgeOnly ? MAX((float)translation.x, 0.f) : (float)hypot(translation.x, translation.y);
@@ -1190,11 +1181,6 @@ RNS_IGNORE_SUPER_CALL_END
 
     case UIGestureRecognizerStateEnded: {
       BOOL shouldFinishTransition = dragDistance > commitDistance || dragVelocity > RNSZoomCommitVelocity;
-      NSLog(
-          @"RNSZOOM swipeEnded commit=%d animController=%d zoomInteractive=%d",
-          shouldFinishTransition,
-          animationController != nil,
-          animationController.isZoomInteractive);
       if (shouldFinishTransition) {
         [animationController startZoomCommitFlightFromTranslation:translation progress:transitionProgress];
         [_interactionController finishInteractiveTransition];

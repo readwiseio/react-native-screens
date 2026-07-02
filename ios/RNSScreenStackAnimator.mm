@@ -141,7 +141,6 @@ static constexpr NSTimeInterval RNSZoomCommitRevealDuration = 0.15; // cover mat
 // Geometry for the portal card flight: the real card view (wrapper) is reparented into
 // the transition container; its cover rect maps onto the alignment rect at the reader end.
 typedef struct {
-  CGRect wrapperFrame; // card wrapper frame in container coordinates (slot pose)
   CGRect coverRect; // fitted cover rect (source rect prop) in container coordinates
   CGRect alignmentRect; // cover box inside the reader screen
 } RNSZoomCardGeometry;
@@ -760,7 +759,6 @@ static BOOL RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
   // its pre-frame pose — the card visibly flies in from (0,0) — and an implicitly
   // animated alpha turns the atomic card/stand-in handoff into a crossfade.
   __block UIView *flyingView = nil;
-  __block BOOL drewHierarchy = NO;
   [UIView performWithoutAnimation:^{
     // Badge overlays (and hidden cards) are alpha-juggled for the render only: both
     // writes land in the same tick, so the display never sees them.
@@ -795,7 +793,7 @@ static BOOL RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
           (CGRectGetMinY(wrapperInContainer) - CGRectGetMinY(coverRect)) * k,
           wrapperInContainer.size.width * k,
           wrapperInContainer.size.height * k);
-      drewHierarchy = RNSZoomDrawViewIntoRect(cardView, baseRect, context);
+      RNSZoomDrawViewIntoRect(cardView, baseRect, context);
       if (destCover != nil && !CGRectIsEmpty(destCover.bounds)) {
         RNSZoomDrawViewIntoRect(destCover, canvas, context);
       }
@@ -812,36 +810,6 @@ static BOOL RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
     }
 
     flyingView = [[UIImageView alloc] initWithImage:cardImage];
-    NSLog(
-        @"RNSZOOM makeFlyingCard cardAlpha=%.2f drewHierarchy=%d dest=%d badges=%lu frame=(%.0f,%.0f %.0fx%.0f)",
-        cardView.alpha,
-        drewHierarchy,
-        destCover != nil,
-        (unsigned long)badges.count,
-        alignmentRect.origin.x,
-        alignmentRect.origin.y,
-        alignmentRect.size.width,
-        alignmentRect.size.height);
-    // ===== RNSZOOM DEBUG PAINT (remove before shipping): borders so content stays visible =====
-    // Flying stand-in = RED border, real card = BLUE border. The blue border view is
-    // tagged RNSZoomCoverBadge (via accessibilityIdentifier) so it never flies.
-    UIView *debugFlyingPaint = [[UIView alloc] initWithFrame:flyingView.bounds];
-    debugFlyingPaint.layer.borderColor = UIColor.redColor.CGColor;
-    debugFlyingPaint.layer.borderWidth = 3;
-    debugFlyingPaint.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    debugFlyingPaint.userInteractionEnabled = NO;
-    [flyingView addSubview:debugFlyingPaint];
-    if ([cardView viewWithTag:987654] == nil) {
-      UIView *debugCardPaint = [[UIView alloc] initWithFrame:cardView.bounds];
-      debugCardPaint.tag = 987654;
-      debugCardPaint.accessibilityIdentifier = @"RNSZoomCoverBadge";
-      debugCardPaint.layer.borderColor = UIColor.blueColor.CGColor;
-      debugCardPaint.layer.borderWidth = 3;
-      debugCardPaint.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-      debugCardPaint.userInteractionEnabled = NO;
-      [cardView addSubview:debugCardPaint];
-    }
-    // ===== END RNSZOOM DEBUG PAINT =====
     flyingView.frame = alignmentRect;
     flyingView.userInteractionEnabled = NO;
     [container addSubview:flyingView];
@@ -849,7 +817,6 @@ static BOOL RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
   _zoomFlyingCardView = flyingView;
   _zoomCardView = cardView;
   _zoomCardOriginalAlpha = cardView.alpha;
-  _zoomCardGeometry.wrapperFrame = alignmentRect;
   return flyingView;
 }
 
@@ -865,7 +832,6 @@ static BOOL RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
   _zoomFlyingCardView = nil;
   _zoomCardView = nil;
   _zoomDestCoverView = nil;
-  NSLog(@"RNSZOOM finishCardFlight alpha=%.2f cardAlive=%d flying=%d", alpha, cardView != nil, flyingView != nil);
   if (flyingView == nil && cardView == nil && destCover == nil) {
     return;
   }
@@ -936,12 +902,6 @@ static BOOL RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
   if (screen.zoomSourceViewNativeID.length > 0 && belowView != nil) {
     cardView = RNSZoomFindViewByNativeID(belowView, screen.zoomSourceViewNativeID, 0);
   }
-  NSLog(
-      @"RNSZOOM animateZoom op=%@ interactive=%d nativeID=%@ cardFound=%d",
-      _operation == UINavigationControllerOperationPush ? @"push" : @"pop",
-      transitionContext.isInteractive,
-      screen.zoomSourceViewNativeID,
-      cardView != nil);
   _zoomCardGeometry.coverRect = sourceRect;
   _zoomCardGeometry.alignmentRect = alignmentRect;
 
@@ -1297,12 +1257,6 @@ static BOOL RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
   CALayer *maskLayer = _zoomMaskLayer;
   UIView *cardView = _zoomPendingCardView;
   _zoomPendingCardView = nil;
-  NSLog(
-      @"RNSZOOM commitFlight enter animatedView=%d maskLayer=%d pendingCard=%d pendingCardSuperview=%d",
-      animatedView != nil,
-      maskLayer != nil,
-      cardView != nil,
-      cardView.superview != nil);
   if (animatedView == nil) {
     return;
   }
@@ -1315,7 +1269,6 @@ static BOOL RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
   UIView *belowView = _zoomBelowView;
   if (cardView == nil && screen != nil && screen.zoomSourceViewNativeID.length > 0 && belowView != nil) {
     cardView = RNSZoomFindViewByNativeID(belowView, screen.zoomSourceViewNativeID, 0);
-    NSLog(@"RNSZOOM commit re-find nativeID=%@ found=%d", screen.zoomSourceViewNativeID, cardView != nil);
   }
   if (cardView != nil && screen != nil && animatedView.superview != nil) {
     CGRect sourceRectInWindow = RNSZoomRectFromDictionary(screen.zoomSourceRect);
