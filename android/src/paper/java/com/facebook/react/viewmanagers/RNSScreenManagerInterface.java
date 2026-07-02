@@ -26,6 +26,11 @@ public interface RNSScreenManagerInterface<T extends View>  {
   void setSheetElevation(T view, int value);
   void setSheetMaxWidth(T view, float value);
   void setSheetBottomInset(T view, float value);
+  void setZoomSourceRect(T view, @Nullable ReadableMap value);
+  void setZoomAlignmentRect(T view, @Nullable ReadableMap value);
+  void setZoomSourceCornerRadius(T view, float value);
+  void setZoomDismissEdgeOnly(T view, boolean value);
+  void setZoomSourceViewNativeID(T view, @Nullable String value);
   void setCustomAnimationOnSwipe(T view, boolean value);
   void setFullScreenSwipeEnabled(T view, boolean value);
   void setFullScreenSwipeShadowEnabled(T view, boolean value);

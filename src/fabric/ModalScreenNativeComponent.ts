@@ -40,6 +40,13 @@ type GestureResponseDistanceType = Readonly<{
   bottom: Float;
 }>;
 
+type ZoomTransitionRectType = Readonly<{
+  x: Float;
+  y: Float;
+  width: Float;
+  height: Float;
+}>;
+
 type StackPresentation =
   | 'push'
   | 'modal'
@@ -61,7 +68,8 @@ type StackAnimation =
   | 'slide_from_bottom'
   | 'fade_from_bottom'
   | 'ios_from_right'
-  | 'ios_from_left';
+  | 'ios_from_left'
+  | 'zoom';
 
 type SwipeDirection = 'vertical' | 'horizontal';
 
@@ -102,6 +110,11 @@ export interface NativeProps extends ViewProps {
   statusBarStyle?: string;
   statusBarTranslucent?: boolean;
   gestureResponseDistance?: GestureResponseDistanceType;
+  zoomSourceRect?: ZoomTransitionRectType;
+  zoomAlignmentRect?: ZoomTransitionRectType;
+  zoomSourceCornerRadius?: WithDefault<Float, 0.0>;
+  zoomDismissEdgeOnly?: WithDefault<boolean, false>;
+  zoomSourceViewNativeID?: string;
   stackPresentation?: WithDefault<StackPresentation, 'push'>;
   stackAnimation?: WithDefault<StackAnimation, 'default'>;
   transitionDuration?: WithDefault<Int32, 500>;

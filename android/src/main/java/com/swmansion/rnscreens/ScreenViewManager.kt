@@ -387,6 +387,31 @@ open class ScreenViewManager :
         value: Float,
     ) = Unit
 
+    override fun setZoomSourceRect(
+        view: Screen?,
+        value: ReadableMap?,
+    ) = Unit
+
+    override fun setZoomAlignmentRect(
+        view: Screen?,
+        value: ReadableMap?,
+    ) = Unit
+
+    override fun setZoomSourceCornerRadius(
+        view: Screen?,
+        value: Float,
+    ) = Unit
+
+    override fun setZoomDismissEdgeOnly(
+        view: Screen?,
+        value: Boolean,
+    ) = Unit
+
+    override fun setZoomSourceViewNativeID(
+        view: Screen?,
+        value: String?,
+    ) = Unit
+
     override fun setScreenId(
         view: Screen,
         value: String?,

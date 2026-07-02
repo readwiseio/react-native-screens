@@ -337,6 +337,7 @@ RNS_IGNORE_SUPER_CALL_END
     case RNSScreenStackAnimationSlideFromBottom:
     case RNSScreenStackAnimationFadeFromBottom:
     case RNSScreenStackAnimationSlideFromLeft:
+    case RNSScreenStackAnimationZoom:
       // Default
       break;
   }
@@ -1297,6 +1298,29 @@ RNS_IGNORE_SUPER_CALL_END
       setGestureResponseDistance:[RNSConvert
                                      gestureResponseDistanceDictFromCppStruct:newScreenProps.gestureResponseDistance]];
 
+  [self setZoomSourceRect:[RNSConvert zoomRectDictFromX:newScreenProps.zoomSourceRect.x
+                                                       y:newScreenProps.zoomSourceRect.y
+                                                   width:newScreenProps.zoomSourceRect.width
+                                                  height:newScreenProps.zoomSourceRect.height]];
+
+  [self setZoomAlignmentRect:[RNSConvert zoomRectDictFromX:newScreenProps.zoomAlignmentRect.x
+                                                          y:newScreenProps.zoomAlignmentRect.y
+                                                      width:newScreenProps.zoomAlignmentRect.width
+                                                     height:newScreenProps.zoomAlignmentRect.height]];
+
+  if (newScreenProps.zoomSourceCornerRadius != oldScreenProps.zoomSourceCornerRadius) {
+    [self setZoomSourceCornerRadius:newScreenProps.zoomSourceCornerRadius];
+  }
+
+  if (newScreenProps.zoomDismissEdgeOnly != oldScreenProps.zoomDismissEdgeOnly) {
+    NSLog(@"RNSZOOM prop zoomDismissEdgeOnly -> %d", newScreenProps.zoomDismissEdgeOnly);
+    [self setZoomDismissEdgeOnly:newScreenProps.zoomDismissEdgeOnly];
+  }
+
+  if (newScreenProps.zoomSourceViewNativeID != oldScreenProps.zoomSourceViewNativeID) {
+    [self setZoomSourceViewNativeID:RCTNSStringFromStringNilIfEmpty(newScreenProps.zoomSourceViewNativeID)];
+  }
+
   [self setPreventNativeDismiss:newScreenProps.preventNativeDismiss];
 
   [self setActivityStateOrNil:[NSNumber numberWithFloat:newScreenProps.activityState]];
@@ -2087,6 +2111,11 @@ RCT_EXPORT_VIEW_PROPERTY(fullScreenSwipeEnabled, BOOL);
 RCT_EXPORT_VIEW_PROPERTY(fullScreenSwipeShadowEnabled, BOOL);
 RCT_EXPORT_VIEW_PROPERTY(gestureEnabled, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(gestureResponseDistance, NSDictionary)
+RCT_EXPORT_VIEW_PROPERTY(zoomSourceRect, NSDictionary)
+RCT_EXPORT_VIEW_PROPERTY(zoomAlignmentRect, NSDictionary)
+RCT_EXPORT_VIEW_PROPERTY(zoomSourceCornerRadius, CGFloat)
+RCT_EXPORT_VIEW_PROPERTY(zoomDismissEdgeOnly, BOOL)
+RCT_EXPORT_VIEW_PROPERTY(zoomSourceViewNativeID, NSString)
 RCT_EXPORT_VIEW_PROPERTY(hideKeyboardOnSwipe, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(preventNativeDismiss, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(replaceAnimation, RNSScreenReplaceAnimation)
@@ -2196,6 +2225,7 @@ RCT_ENUM_CONVERTER(
       @"slide_from_left" : @(RNSScreenStackAnimationSlideFromLeft),
       @"ios_from_right" : @(RNSScreenStackAnimationDefault),
       @"ios_from_left" : @(RNSScreenStackAnimationSlideFromLeft),
+      @"zoom" : @(RNSScreenStackAnimationZoom),
     }),
     RNSScreenStackAnimationDefault,
     integerValue)

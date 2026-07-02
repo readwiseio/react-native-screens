@@ -92,6 +92,12 @@ export const InnerScreen = React.forwardRef<View, ScreenProps>(
       sheetInitialDetentIndex = 0,
       sheetMaxWidth = 0,
       sheetBottomInset = 0,
+      // Zoom transition props
+      zoomSourceRect,
+      zoomAlignmentRect,
+      zoomSourceCornerRadius = 0,
+      zoomDismissEdgeOnly = false,
+      zoomSourceViewNativeID,
       // Other
       screenId,
       stackPresentation,
@@ -229,6 +235,21 @@ export const InnerScreen = React.forwardRef<View, ScreenProps>(
               top: gestureResponseDistance?.top ?? -1,
               bottom: gestureResponseDistance?.bottom ?? -1,
             }}
+            zoomSourceRect={{
+              x: zoomSourceRect?.x ?? 0,
+              y: zoomSourceRect?.y ?? 0,
+              width: zoomSourceRect?.width ?? 0,
+              height: zoomSourceRect?.height ?? 0,
+            }}
+            zoomAlignmentRect={{
+              x: zoomAlignmentRect?.x ?? 0,
+              y: zoomAlignmentRect?.y ?? 0,
+              width: zoomAlignmentRect?.width ?? 0,
+              height: zoomAlignmentRect?.height ?? 0,
+            }}
+            zoomSourceCornerRadius={zoomSourceCornerRadius}
+            zoomDismissEdgeOnly={zoomDismissEdgeOnly}
+            zoomSourceViewNativeID={zoomSourceViewNativeID}
             // This prevents showing blank screen when navigating between multiple screens with freezing
             // https://github.com/software-mansion/react-native-screens/pull/1208
             ref={handleRef}

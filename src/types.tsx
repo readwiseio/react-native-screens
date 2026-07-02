@@ -40,7 +40,8 @@ export type StackAnimationTypes =
   | 'slide_from_right'
   | 'slide_from_left'
   | 'ios_from_right'
-  | 'ios_from_left';
+  | 'ios_from_left'
+  | 'zoom';
 export type BlurEffectTypes =
   | 'none'
   | 'extraLight'
@@ -96,6 +97,13 @@ export type GestureResponseDistanceType = {
   end?: number;
   top?: number;
   bottom?: number;
+};
+
+export type ZoomTransitionRectType = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 };
 
 export type SearchBarPlacement =
@@ -167,6 +175,39 @@ export interface ScreenProps extends ViewProps {
    * @platform ios
    */
   gestureResponseDistance?: GestureResponseDistanceType;
+  /**
+   * Source rect (in window coordinates) the screen zooms out of when `stackAnimation` is `zoom`.
+   *
+   * @platform ios
+   */
+  zoomSourceRect?: ZoomTransitionRectType;
+  /**
+   * Frame within the pushed screen that should land on `zoomSourceRect` (e.g. a cover image box).
+   * Used when `stackAnimation` is `zoom`.
+   *
+   * @platform ios
+   */
+  zoomAlignmentRect?: ZoomTransitionRectType;
+  /**
+   * Corner radius of the source view, so the zoom mask matches it at the source end.
+   *
+   * @platform ios
+   */
+  zoomSourceCornerRadius?: number;
+  /**
+   * When true, the zoom dismiss pan only starts from the left-edge strip with a rightward
+   * pull; when false (default) it starts anywhere, in any direction.
+   *
+   * @platform ios
+   */
+  zoomDismissEdgeOnly?: boolean;
+  /**
+   * nativeID of the source card view in the screen below. When found, the zoom
+   * transition natively reparents and flies the actual card view (portal-style).
+   *
+   * @platform ios
+   */
+  zoomSourceViewNativeID?: string;
   /**
    * Whether the home indicator should be hidden on this screen. Defaults to `false`.
    *

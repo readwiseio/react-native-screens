@@ -210,6 +210,11 @@ const RouteView = ({
     sheetInitialDetentIndex = 0,
     sheetMaxWidth = 0,
     sheetBottomInset = 0,
+    zoomSourceRect,
+    zoomAlignmentRect,
+    zoomSourceCornerRadius = 0,
+    zoomDismissEdgeOnly = false,
+    zoomSourceViewNativeID,
     nativeBackButtonDismissalEnabled = false,
     navigationBarColor,
     navigationBarTranslucent,
@@ -344,6 +349,11 @@ const RouteView = ({
       homeIndicatorHidden={homeIndicatorHidden}
       gestureEnabled={isAndroid ? false : gestureEnabled}
       gestureResponseDistance={gestureResponseDistance}
+      zoomSourceRect={zoomSourceRect}
+      zoomAlignmentRect={zoomAlignmentRect}
+      zoomSourceCornerRadius={zoomSourceCornerRadius}
+      zoomDismissEdgeOnly={zoomDismissEdgeOnly}
+      zoomSourceViewNativeID={zoomSourceViewNativeID}
       nativeBackButtonDismissalEnabled={nativeBackButtonDismissalEnabled}
       navigationBarColor={navigationBarColor}
       navigationBarTranslucent={navigationBarTranslucent}

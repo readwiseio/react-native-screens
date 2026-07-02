@@ -86,6 +86,8 @@
       return RNSScreenStackAnimationSlideFromBottom;
     case Fade_from_bottom:
       return RNSScreenStackAnimationFadeFromBottom;
+    case Zoom:
+      return RNSScreenStackAnimationZoom;
   }
 }
 
@@ -150,6 +152,16 @@
     @"end" : @(gestureResponseDistance.end),
     @"top" : @(gestureResponseDistance.top),
     @"bottom" : @(gestureResponseDistance.bottom),
+  };
+}
+
++ (NSDictionary *)zoomRectDictFromX:(double)x y:(double)y width:(double)width height:(double)height
+{
+  return @{
+    @"x" : @(x),
+    @"y" : @(y),
+    @"width" : @(width),
+    @"height" : @(height),
   };
 }
 

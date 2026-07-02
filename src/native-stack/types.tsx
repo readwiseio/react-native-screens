@@ -187,6 +187,36 @@ export type NativeStackNavigationOptions = {
    */
   gestureResponseDistance?: ScreenProps['gestureResponseDistance'];
   /**
+   * Source rect the screen zooms out of when `stackAnimation` is `zoom`.
+   *
+   * @platform ios
+   */
+  zoomSourceRect?: ScreenProps['zoomSourceRect'];
+  /**
+   * Frame within the pushed screen that lands on `zoomSourceRect` when `stackAnimation` is `zoom`.
+   *
+   * @platform ios
+   */
+  zoomAlignmentRect?: ScreenProps['zoomAlignmentRect'];
+  /**
+   * Corner radius of the source view for the zoom transition mask.
+   *
+   * @platform ios
+   */
+  zoomSourceCornerRadius?: ScreenProps['zoomSourceCornerRadius'];
+  /**
+   * When true, the zoom dismiss pan only starts from the left-edge strip.
+   *
+   * @platform ios
+   */
+  zoomDismissEdgeOnly?: ScreenProps['zoomDismissEdgeOnly'];
+  /**
+   * nativeID of the source card view for the portal-style zoom flight.
+   *
+   * @platform ios
+   */
+  zoomSourceViewNativeID?: ScreenProps['zoomSourceViewNativeID'];
+  /**
    * Title to display in the back button.
    * Only supported on iOS.
    *

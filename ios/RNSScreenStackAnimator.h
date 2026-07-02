@@ -19,4 +19,24 @@
 
 + (BOOL)isCustomAnimation:(RNSScreenStackAnimation)animation;
 
+#pragma mark - Zoom interactive dismissal
+
+/// YES while an interactive zoom pop is being driven manually by the drag.
+@property (nonatomic, readonly) BOOL isZoomInteractive;
+
+/// Duration factors (relative to the transition duration) the interaction controller
+/// should use when continuing the progress-carrier animator on finish/cancel, so it
+/// completes together with the manual flight/spring driven here.
+- (CGFloat)zoomCancelDurationScale;
+
+/// Applies the live drag pose (finger-follow + eased shrink + corner morph) to the
+/// dismissing screen. progress is the normalized drag reach [0..1].
+- (void)applyZoomDragPoseWithTranslation:(CGPoint)translation progress:(CGFloat)progress;
+
+/// Runs the close flight from the current drag pose to the source rect (commit).
+- (void)startZoomCommitFlightFromTranslation:(CGPoint)translation progress:(CGFloat)progress;
+
+/// Springs the screen back to identity (cancelled drag).
+- (void)startZoomCancelSpring;
+
 @end

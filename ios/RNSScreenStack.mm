@@ -329,6 +329,9 @@ namespace react = facebook::react;
   BOOL _invalidated;
   BOOL _isFullWidthSwiping;
   RNSPercentDrivenInteractiveTransition *_interactionController;
+  // Latched at zoom-drag begin: the regime must not flip mid-gesture when the book
+  // finishes loading and JS updates zoomDismissEdgeOnly.
+  BOOL _zoomSwipeEdgeOnly;
   __weak RNSScreenStackManager *_manager;
   BOOL _updateScheduled;
 #ifdef RCT_NEW_ARCH_ENABLED
@@ -974,6 +977,21 @@ RNS_IGNORE_SUPER_CALL_END
   // RNSPanGestureRecognizer will receive events iff topScreen.fullScreenSwipeEnabled == YES;
   // Events are filtered in gestureRecognizer:shouldReceivePressOrTouchEvent: method
   if ([gestureRecognizer isKindOfClass:[RNSPanGestureRecognizer class]]) {
+    // Zoom "book is readable" regime: only a clear rightward pull that started within
+    // the left-edge strip may begin the dismiss (JS DISMISS_EDGE_WIDTH / activation
+    // filter); anything else falls through to the reader's own gestures.
+    if (topScreen.stackAnimation == RNSScreenStackAnimationZoom && topScreen.zoomDismissEdgeOnly) {
+      static const CGFloat RNSZoomDismissEdgeWidth = 40;
+      UIPanGestureRecognizer *panRecognizer = (UIPanGestureRecognizer *)gestureRecognizer;
+      CGPoint location = [panRecognizer locationInView:panRecognizer.view];
+      CGPoint translation = [panRecognizer translationInView:panRecognizer.view];
+      CGFloat startX = location.x - translation.x;
+      BOOL startedInEdgeStrip = startX <= RNSZoomDismissEdgeWidth;
+      BOOL rightwardPull = translation.x > 0 && translation.x >= fabs(translation.y);
+      if (!startedInEdgeStrip || !rightwardPull) {
+        return NO;
+      }
+    }
     if ([self isInGestureResponseDistance:gestureRecognizer topScreen:topScreen]) {
       _isFullWidthSwiping = YES;
       [self cancelTouchesInParent];
@@ -1038,6 +1056,12 @@ RNS_IGNORE_SUPER_CALL_END
 - (void)handleSwipe:(UIPanGestureRecognizer *)gestureRecognizer
 {
   RNSScreenView *topScreen = _reactSubviews.lastObject;
+
+  if (topScreen.stackAnimation == RNSScreenStackAnimationZoom) {
+    [self handleZoomSwipe:gestureRecognizer topScreen:topScreen];
+    return;
+  }
+
   float translation;
   float velocity;
   float distance;
@@ -1092,6 +1116,95 @@ RNS_IGNORE_SUPER_CALL_END
       }
       _interactionController = nil;
       _isFullWidthSwiping = NO;
+    }
+    default: {
+      break;
+    }
+  }
+}
+
+// Interactive dismiss for the zoom animation. The pan drives the screen pose manually
+// through the zoom animator (finger-follow + eased shrink, the JS dismissDrag port);
+// the interaction controller only scrubs the dimming carrier + UIKit progress.
+// While the book loads the drag works from anywhere in any direction; once loaded
+// (zoomDismissEdgeOnly) only a rightward pull from the left-edge strip starts it
+// (gated in gestureRecognizerShouldBegin) and progress tracks the horizontal pull.
+- (void)handleZoomSwipe:(UIPanGestureRecognizer *)gestureRecognizer topScreen:(RNSScreenView *)topScreen
+{
+  // JS: COMMIT_DISTANCE/COMMIT_VELOCITY (any-direction) and DISMISS_COMMIT_DISTANCE (edge regime).
+  static const float RNSZoomCommitDistance = 90.f;
+  static const float RNSZoomEdgeCommitDistance = 95.f;
+  static const float RNSZoomCommitVelocity = 700.f;
+
+  CGPoint translation = [gestureRecognizer translationInView:gestureRecognizer.view];
+  CGPoint velocity = [gestureRecognizer velocityInView:gestureRecognizer.view];
+  if (gestureRecognizer.state == UIGestureRecognizerStateBegan) {
+    _zoomSwipeEdgeOnly = topScreen.zoomDismissEdgeOnly;
+  }
+  BOOL edgeOnly = _zoomSwipeEdgeOnly;
+  if (gestureRecognizer.state != UIGestureRecognizerStateChanged) {
+    NSLog(
+        @"RNSZOOM swipe state=%ld latchedEdgeOnly=%d liveEdgeOnly=%d tx=%.1f ty=%.1f coordinator=%d interaction=%d",
+        (long)gestureRecognizer.state,
+        edgeOnly,
+        topScreen.zoomDismissEdgeOnly,
+        translation.x,
+        translation.y,
+        _controller.transitionCoordinator != nil,
+        _interactionController != nil);
+  }
+
+  float dragDistance = edgeOnly ? MAX((float)translation.x, 0.f) : (float)hypot(translation.x, translation.y);
+  float dragVelocity = edgeOnly ? (float)velocity.x : (float)hypot(velocity.x, velocity.y);
+  float commitDistance = edgeOnly ? RNSZoomEdgeCommitDistance : RNSZoomCommitDistance;
+  float progressDistance = MAX((float)gestureRecognizer.view.bounds.size.width * 0.92f, 1.f);
+  float transitionProgress = MIN(dragDistance / progressDistance, 0.99f);
+
+  RNSScreenStackAnimator *animationController = _interactionController.animationController;
+
+  switch (gestureRecognizer.state) {
+    case UIGestureRecognizerStateBegan: {
+      // Never start a second pop while a transition (open, close, or another drag's
+      // completion) is still in flight — intercepting mid-animation must be inert.
+      if (_controller.transitionCoordinator != nil || _interactionController != nil) {
+        break;
+      }
+      _interactionController = [RNSPercentDrivenInteractiveTransition new];
+      [_controller popViewControllerAnimated:YES];
+      break;
+    }
+
+    case UIGestureRecognizerStateChanged: {
+      [_interactionController updateInteractiveTransition:transitionProgress];
+      [animationController applyZoomDragPoseWithTranslation:translation progress:transitionProgress];
+      break;
+    }
+
+    case UIGestureRecognizerStateCancelled: {
+      [animationController startZoomCancelSpring];
+      [_interactionController cancelInteractiveTransition];
+      _interactionController = nil;
+      _isFullWidthSwiping = NO;
+      break;
+    }
+
+    case UIGestureRecognizerStateEnded: {
+      BOOL shouldFinishTransition = dragDistance > commitDistance || dragVelocity > RNSZoomCommitVelocity;
+      NSLog(
+          @"RNSZOOM swipeEnded commit=%d animController=%d zoomInteractive=%d",
+          shouldFinishTransition,
+          animationController != nil,
+          animationController.isZoomInteractive);
+      if (shouldFinishTransition) {
+        [animationController startZoomCommitFlightFromTranslation:translation progress:transitionProgress];
+        [_interactionController finishInteractiveTransition];
+      } else {
+        [animationController startZoomCancelSpring];
+        [_interactionController cancelInteractiveTransition];
+      }
+      _interactionController = nil;
+      _isFullWidthSwiping = NO;
+      break;
     }
     default: {
       break;

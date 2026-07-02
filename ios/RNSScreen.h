@@ -87,6 +87,19 @@ namespace react = facebook::react;
 @property (nonatomic) BOOL preventNativeDismiss;
 @property (nonatomic, retain) RNSScreen *controller;
 @property (nonatomic, copy) NSDictionary *gestureResponseDistance;
+// Props for the zoom (Apple Books style) stack animation. Rects are dictionaries
+// with x/y/width/height keys; source rect is in window coordinates, alignment rect
+// is the cover's frame within the pushed screen. width == 0 means "unset".
+@property (nonatomic, copy, nullable) NSDictionary *zoomSourceRect;
+@property (nonatomic, copy, nullable) NSDictionary *zoomAlignmentRect;
+@property (nonatomic) CGFloat zoomSourceCornerRadius;
+// When set, the zoom dismiss pan only starts from the left-edge strip with a clear
+// rightward pull (the "book is readable" regime); otherwise any direction anywhere.
+@property (nonatomic) BOOL zoomDismissEdgeOnly;
+// nativeID of the source card view (in the screen below). When found, the zoom
+// reparents and flies the actual card view — the native equivalent of a JS portal —
+// so the landing handoff is seamless by construction.
+@property (nonatomic, copy, nullable) NSString *zoomSourceViewNativeID;
 @property (nonatomic) int activityState;
 @property (nonatomic, nullable) NSString *screenId;
 @property (weak, nonatomic) UIView<RNSScreenContainerDelegate> *reactSuperview;
