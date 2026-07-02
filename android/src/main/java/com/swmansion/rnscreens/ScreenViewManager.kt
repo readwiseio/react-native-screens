@@ -376,6 +376,17 @@ open class ScreenViewManager :
         view.sheetInitialDetentIndex = value
     }
 
+    // these props are iOS-only, but we must override the interface stubs
+    override fun setSheetMaxWidth(
+        view: Screen?,
+        value: Float,
+    ) = Unit
+
+    override fun setSheetBottomInset(
+        view: Screen?,
+        value: Float,
+    ) = Unit
+
     override fun setScreenId(
         view: Screen,
         value: String?,

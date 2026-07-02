@@ -90,6 +90,8 @@ export const InnerScreen = React.forwardRef<View, ScreenProps>(
       sheetExpandsWhenScrolledToEdge = true,
       sheetElevation = 24,
       sheetInitialDetentIndex = 0,
+      sheetMaxWidth = 0,
+      sheetBottomInset = 0,
       // Other
       screenId,
       stackPresentation,
@@ -219,6 +221,8 @@ export const InnerScreen = React.forwardRef<View, ScreenProps>(
             sheetCornerRadius={sheetCornerRadius}
             sheetExpandsWhenScrolledToEdge={sheetExpandsWhenScrolledToEdge}
             sheetInitialDetent={resolvedSheetInitialDetentIndex}
+            sheetMaxWidth={sheetMaxWidth}
+            sheetBottomInset={sheetBottomInset}
             gestureResponseDistance={{
               start: gestureResponseDistance?.start ?? -1,
               end: gestureResponseDistance?.end ?? -1,

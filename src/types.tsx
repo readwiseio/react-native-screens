@@ -349,6 +349,23 @@ export interface ScreenProps extends ViewProps {
    */
   sheetElevation?: number;
   /**
+   * Maximum width of the sheet in points.
+   * When > 0, the sheet will be constrained to this width and centered.
+   * Works only when `stackPresentation` is set to `formSheet` or `pageSheet`.
+   * Defaults to `0` (no constraint).
+   *
+   * @platform ios
+   */
+  sheetMaxWidth?: number;
+  /**
+   * Bottom inset for the sheet content.
+   * Works only when `stackPresentation` is set to `formSheet` or `pageSheet`.
+   * Defaults to `0`.
+   *
+   * @platform ios
+   */
+  sheetBottomInset?: number;
+  /**
    * Whether the sheet should expand to larger detent when scrolling.
    * Works only when `stackPresentation` is set to `formSheet`.
    * Defaults to `true`.

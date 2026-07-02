@@ -965,7 +965,8 @@ RNS_IGNORE_SUPER_CALL_END
  */
 - (void)updateFormSheetPresentationStyle
 {
-  if (_stackPresentation != RNSScreenStackPresentationFormSheet) {
+  if (_stackPresentation != RNSScreenStackPresentationFormSheet &&
+      _stackPresentation != RNSScreenStackPresentationPageSheet) {
     return;
   }
 
@@ -1066,6 +1067,38 @@ RNS_IGNORE_SUPER_CALL_END
     sheet.prefersScrollingExpandsWhenScrolledToEdge = _sheetExpandsWhenScrolledToEdge;
     [self setGrabberVisibleForSheet:sheet to:_sheetGrabberVisible animate:YES];
     [self setCornerRadiusForSheet:sheet to:_sheetCornerRadius animate:YES];
+
+    // Custom sheet sizing via preferredContentSize.
+    // Only constrain width when the screen is wider than sheetMaxWidth.
+    // Guard each setter so redundant assignments don't trigger re-layout.
+    CGFloat screenWidth = UIScreen.mainScreen.bounds.size.width;
+    if (_sheetMaxWidth > 0 && screenWidth > _sheetMaxWidth) {
+      if (@available(iOS 17.0, *)) {
+        if (sheet.prefersPageSizing != NO) {
+          sheet.prefersPageSizing = NO;
+        }
+      }
+
+      CGFloat screenHeight = UIScreen.mainScreen.bounds.size.height;
+      CGFloat detentFraction = 0.85;
+      if (_sheetAllowedDetents.count > 0 && _sheetAllowedDetents[0].floatValue > 0) {
+        detentFraction = _sheetAllowedDetents[0].floatValue;
+      }
+      CGSize newSize = CGSizeMake(_sheetMaxWidth, screenHeight * detentFraction);
+      if (!CGSizeEqualToSize(_controller.preferredContentSize, newSize)) {
+        _controller.preferredContentSize = newSize;
+      }
+
+      sheet.widthFollowsPreferredContentSizeWhenEdgeAttached = YES;
+      sheet.prefersEdgeAttachedInCompactHeight = YES;
+    }
+
+    if (_sheetBottomInset > 0) {
+      UIEdgeInsets newInsets = UIEdgeInsetsMake(0, 0, _sheetBottomInset, 0);
+      if (!UIEdgeInsetsEqualToEdgeInsets(_controller.additionalSafeAreaInsets, newInsets)) {
+        _controller.additionalSafeAreaInsets = newInsets;
+      }
+    }
 
     // lud - largest undimmed detent
     // First we try to take value from the prop or default.
@@ -1309,6 +1342,14 @@ RNS_IGNORE_SUPER_CALL_END
   if (newScreenProps.sheetLargestUndimmedDetent != oldScreenProps.sheetLargestUndimmedDetent) {
     [self setSheetLargestUndimmedDetent:[NSNumber numberWithInt:newScreenProps.sheetLargestUndimmedDetent]];
   }
+
+  if (newScreenProps.sheetMaxWidth != oldScreenProps.sheetMaxWidth) {
+    [self setSheetMaxWidth:newScreenProps.sheetMaxWidth];
+  }
+
+  if (newScreenProps.sheetBottomInset != oldScreenProps.sheetBottomInset) {
+    [self setSheetBottomInset:newScreenProps.sheetBottomInset];
+  }
 #endif // !TARGET_OS_TV
 
   if (newScreenProps.stackPresentation != oldScreenProps.stackPresentation) {
@@ -1382,7 +1423,8 @@ RNS_IGNORE_SUPER_CALL_END
 {
   [super didSetProps:changedProps];
 #if !TARGET_OS_TV && !TARGET_OS_VISION
-  if (self.stackPresentation == RNSScreenStackPresentationFormSheet) {
+  if (self.stackPresentation == RNSScreenStackPresentationFormSheet ||
+      self.stackPresentation == RNSScreenStackPresentationPageSheet) {
     [self updateFormSheetPresentationStyle];
   }
 #endif // !TARGET_OS_TV
@@ -2078,6 +2120,8 @@ RCT_EXPORT_VIEW_PROPERTY(sheetGrabberVisible, BOOL);
 RCT_EXPORT_VIEW_PROPERTY(sheetCornerRadius, CGFloat);
 RCT_EXPORT_VIEW_PROPERTY(sheetInitialDetent, NSInteger);
 RCT_EXPORT_VIEW_PROPERTY(sheetExpandsWhenScrolledToEdge, BOOL);
+RCT_EXPORT_VIEW_PROPERTY(sheetMaxWidth, CGFloat);
+RCT_EXPORT_VIEW_PROPERTY(sheetBottomInset, CGFloat);
 #endif
 
 #if !TARGET_OS_TV && !TARGET_OS_VISION
