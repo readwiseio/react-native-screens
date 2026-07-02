@@ -1064,9 +1064,11 @@ static BOOL RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
 
   if (transitionContext.isInteractive) {
     // Interactive drag: the gesture drives the page pose manually (see
-    // applyZoomDragPose…); this animator only carries the dimming + the UIKit
-    // transition progress, scrubbed by the interaction controller. The card flight
-    // happens at commit (startZoomCommitFlight) if the card view is available.
+    // applyZoomDragPose…); this animator only carries the UIKit transition progress,
+    // scrubbed by the interaction controller. The dimming stays at its resting alpha
+    // for the whole drag (scrubbing it made the release visibly snap) and only fades
+    // during the commit flight. The card flight happens at commit
+    // (startZoomCommitFlight) if the card view is available.
     _isZoomInteractive = YES;
     _zoomAnimatedView = animatedView;
     _zoomDimmingView = dimmingView;
@@ -1082,10 +1084,18 @@ static BOOL RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
     _zoomMaskLayer = dragMaskLayer;
     animatedView.layer.mask = dragMaskLayer;
 
+    // Invisible progress carrier: the animator needs a real animation to span the
+    // transition duration (an empty animator completes instantly, ending the
+    // transition before the commit flight lands), but nothing visible may ride it.
+    UIView *progressCarrier = [[UIView alloc] initWithFrame:CGRectZero];
+    progressCarrier.userInteractionEnabled = NO;
+    [UIView performWithoutAnimation:^{
+      [container addSubview:progressCarrier];
+    }];
     UIViewPropertyAnimator *animator = [[UIViewPropertyAnimator alloc] initWithDuration:duration
                                                                                   curve:UIViewAnimationCurveLinear
                                                                              animations:^{
-                                                                               dimmingView.alpha = 0.0;
+                                                                               progressCarrier.alpha = 0.0;
                                                                              }];
     [animator addCompletion:^(UIViewAnimatingPosition finalPosition) {
       const BOOL completed = ![transitionContext transitionWasCancelled];
@@ -1100,6 +1110,7 @@ static BOOL RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
       }
       animatedView.transform = CGAffineTransformIdentity;
       animatedView.alpha = 1.0;
+      [progressCarrier removeFromSuperview];
       [dimmingView removeFromSuperview];
       [transitionContext completeTransition:completed];
     }];
@@ -1256,6 +1267,9 @@ static BOOL RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
   UIView *animatedView = _zoomAnimatedView;
   CALayer *maskLayer = _zoomMaskLayer;
   UIView *cardView = _zoomPendingCardView;
+  // The dim is held at its resting alpha through the whole drag; the commit flight
+  // owns its fade-out (keyframed with the flight below).
+  UIView *dimmingView = _zoomDimmingView;
   _zoomPendingCardView = nil;
   if (animatedView == nil) {
     return;
@@ -1355,6 +1369,8 @@ static BOOL RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
                                                                             RNSZoomLerp(startTY, slotTY, cpY)),
                                                                         s,
                                                                         s);
+                                                                    dimmingView.alpha =
+                                                                        RNSZoomDimMaxAlpha * (1 - RNSZoomClamp01(cp));
                                                                   }];
                                   }
                                 }
@@ -1392,6 +1408,8 @@ static BOOL RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
                                                                           RNSZoomLerp(dragTY, g.shelfTY, cpY)),
                                                                       s,
                                                                       s);
+                                                                  dimmingView.alpha =
+                                                                      RNSZoomDimMaxAlpha * (1 - RNSZoomClamp01(cp));
                                                                 }];
                                 }
                               }

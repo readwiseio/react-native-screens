@@ -58,10 +58,11 @@
 
   if (_animationController.isZoomInteractive) {
     // The zoom drag drives the screen pose manually; the carrier here only holds the
-    // dimming + UIKit progress. Continue it linearly so it completes in one flight
-    // duration (durationFactor scales the FULL timeline — (1 - fraction) yields a
-    // constant real remaining time, matching the manual flight; anything larger makes
-    // the dim crawl for duration/(1 - fraction)). Cancel matches the 360ms spring.
+    // UIKit progress (an invisible dummy view). Continue it linearly so it completes
+    // in one flight duration (durationFactor scales the FULL timeline — (1 - fraction)
+    // yields a constant real remaining time, matching the manual flight; anything
+    // larger keeps the transition alive for duration/(1 - fraction)). Cancel matches
+    // the 360ms spring.
     UICubicTimingParameters *linearTiming =
         [[UICubicTimingParameters alloc] initWithAnimationCurve:UIViewAnimationCurveLinear];
     CGFloat durationFactor = 1 - animator.fractionComplete;
