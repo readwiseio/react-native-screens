@@ -1135,6 +1135,8 @@ RNS_IGNORE_SUPER_CALL_END
   static const float RNSZoomCommitDistance = 90.f;
   static const float RNSZoomEdgeCommitDistance = 95.f;
   static const float RNSZoomCommitVelocity = 700.f;
+  // JS dismissDrag: full drag progress spans 92% of the screen width.
+  static const float RNSZoomProgressSpanFraction = 0.92f;
 
   CGPoint translation = [gestureRecognizer translationInView:gestureRecognizer.view];
   CGPoint velocity = [gestureRecognizer velocityInView:gestureRecognizer.view];
@@ -1146,7 +1148,7 @@ RNS_IGNORE_SUPER_CALL_END
   float dragDistance = edgeOnly ? MAX((float)translation.x, 0.f) : (float)hypot(translation.x, translation.y);
   float dragVelocity = edgeOnly ? (float)velocity.x : (float)hypot(velocity.x, velocity.y);
   float commitDistance = edgeOnly ? RNSZoomEdgeCommitDistance : RNSZoomCommitDistance;
-  float progressDistance = MAX((float)gestureRecognizer.view.bounds.size.width * 0.92f, 1.f);
+  float progressDistance = MAX((float)gestureRecognizer.view.bounds.size.width * RNSZoomProgressSpanFraction, 1.f);
   float transitionProgress = MIN(dragDistance / progressDistance, 0.99f);
 
   RNSScreenStackAnimator *animationController = _interactionController.animationController;

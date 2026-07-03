@@ -62,7 +62,7 @@
     // in one flight duration (durationFactor scales the FULL timeline — (1 - fraction)
     // yields a constant real remaining time, matching the manual flight; anything
     // larger keeps the transition alive for duration/(1 - fraction)). Cancel matches
-    // the 360ms spring.
+    // the cancel spring (RNSZoomCancelSpringDuration).
     UICubicTimingParameters *linearTiming =
         [[UICubicTimingParameters alloc] initWithAnimationCurve:UIViewAnimationCurveLinear];
     CGFloat durationFactor = 1 - animator.fractionComplete;

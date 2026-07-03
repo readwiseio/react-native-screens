@@ -71,6 +71,9 @@ struct ContentWrapperBox {
   CGFloat _sheetContentHeight;
   ContentWrapperBox _contentWrapperBox;
   bool _sheetHasInitialDetentSet;
+  // YES once the fork's pageSheet sizing props were applied, so the method re-enters
+  // to reset them when they return to 0 (the gate below would otherwise skip it).
+  bool _sheetDidCustomizePageSheet;
 #ifdef RCT_NEW_ARCH_ENABLED
   RCTSurfaceTouchHandler *_touchHandler;
   react::RNSScreenShadowNode::ConcreteState::Shared _state;
@@ -966,15 +969,20 @@ RNS_IGNORE_SUPER_CALL_END
  */
 - (void)updateFormSheetPresentationStyle
 {
-  // pageSheet screens enter this method ONLY when the fork-added sizing props are set —
-  // widening unconditionally would hand grabber/corner-radius/detent handling to every
-  // pre-existing pageSheet screen. The other formSheet-only gates in this file
-  // (content-height / keyboard handling) are deliberately left untouched.
+  // pageSheet screens enter this method ONLY when the fork-added sizing props are (or
+  // were) set — widening unconditionally would hand grabber/corner-radius/detent
+  // handling to every pre-existing pageSheet screen. The `did customize` flag lets one
+  // more pass through after the props return to 0, so the reset branches below can
+  // restore the defaults. The other formSheet-only gates in this file (content-height /
+  // keyboard handling) are deliberately left untouched.
   const BOOL isFormSheet = _stackPresentation == RNSScreenStackPresentationFormSheet;
-  const BOOL isCustomizedPageSheet = _stackPresentation == RNSScreenStackPresentationPageSheet &&
-      (_sheetMaxWidth > 0 || _sheetBottomInset > 0);
-  if (!isFormSheet && !isCustomizedPageSheet) {
+  const BOOL isPageSheet = _stackPresentation == RNSScreenStackPresentationPageSheet;
+  const BOOL pageSheetCustomized = _sheetMaxWidth > 0 || _sheetBottomInset > 0;
+  if (!isFormSheet && !(isPageSheet && (pageSheetCustomized || _sheetDidCustomizePageSheet))) {
     return;
+  }
+  if (isPageSheet) {
+    _sheetDidCustomizePageSheet = pageSheetCustomized;
   }
 
   int firstDimmedDetentIndex = _sheetAllowedDetents.count;
@@ -1106,11 +1114,19 @@ RNS_IGNORE_SUPER_CALL_END
         sheet.prefersEdgeAttachedInCompactHeight = YES;
       }
     } else {
+      if (@available(iOS 17.0, *)) {
+        if (sheet.prefersPageSizing != YES) {
+          sheet.prefersPageSizing = YES;
+        }
+      }
       if (!CGSizeEqualToSize(_controller.preferredContentSize, CGSizeZero)) {
         _controller.preferredContentSize = CGSizeZero;
       }
       if (sheet.widthFollowsPreferredContentSizeWhenEdgeAttached != NO) {
         sheet.widthFollowsPreferredContentSizeWhenEdgeAttached = NO;
+      }
+      if (sheet.prefersEdgeAttachedInCompactHeight != NO) {
+        sheet.prefersEdgeAttachedInCompactHeight = NO;
       }
     }
 

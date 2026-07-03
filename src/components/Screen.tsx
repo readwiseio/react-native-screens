@@ -57,6 +57,15 @@ interface ViewConfig extends View {
   };
 }
 
+// Codegen rect props can't be optional; natively a non-positive width/height means
+// "unset". One helper for both zoom rects so the defaults can't drift apart.
+const normalizeZoomRect = (rect?: ScreenProps['zoomSourceRect']) => ({
+  x: rect?.x ?? 0,
+  y: rect?.y ?? 0,
+  width: rect?.width ?? 0,
+  height: rect?.height ?? 0,
+});
+
 export const InnerScreen = React.forwardRef<View, ScreenProps>(
   function InnerScreen(props, ref) {
     const innerRef = React.useRef<ViewConfig | null>(null);
@@ -235,18 +244,8 @@ export const InnerScreen = React.forwardRef<View, ScreenProps>(
               top: gestureResponseDistance?.top ?? -1,
               bottom: gestureResponseDistance?.bottom ?? -1,
             }}
-            zoomSourceRect={{
-              x: zoomSourceRect?.x ?? 0,
-              y: zoomSourceRect?.y ?? 0,
-              width: zoomSourceRect?.width ?? 0,
-              height: zoomSourceRect?.height ?? 0,
-            }}
-            zoomAlignmentRect={{
-              x: zoomAlignmentRect?.x ?? 0,
-              y: zoomAlignmentRect?.y ?? 0,
-              width: zoomAlignmentRect?.width ?? 0,
-              height: zoomAlignmentRect?.height ?? 0,
-            }}
+            zoomSourceRect={normalizeZoomRect(zoomSourceRect)}
+            zoomAlignmentRect={normalizeZoomRect(zoomAlignmentRect)}
             zoomSourceCornerRadius={zoomSourceCornerRadius}
             zoomDismissEdgeOnly={zoomDismissEdgeOnly}
             zoomSourceViewNativeID={zoomSourceViewNativeID}

@@ -21,7 +21,9 @@
 
 #pragma mark - Zoom interactive dismissal
 
-/// YES while an interactive zoom pop is being driven manually by the drag.
+/// YES for the lifetime of an interactive zoom pop — from drag begin until the
+/// progress carrier completes (the commit/cancel completion flight reads it after
+/// the finger lifts).
 @property (nonatomic, readonly) BOOL isZoomInteractive;
 
 /// Duration factor (relative to the transition duration) the interaction controller
