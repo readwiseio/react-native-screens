@@ -49,8 +49,8 @@ static constexpr CGFloat RNSZoomCancelSpringDamping = 0.82;
 static constexpr int RNSZoomKeyframeCount = 24;
 // The push backdrop (the page, behind the flying stand-in) reaches full opacity at
 // this fraction of the eased progress. Ported from the legacy JS overlay's
-// [0, 0.85] progress interpolation (the overlay was removed by the zoom feature
-// branch, artemlitch/native-book-zoom).
+// [0, 0.85] progress interpolation (transitions/ReaderCover.tsx:612, removed by the
+// zoom feature branch, artemlitch/native-book-zoom).
 static constexpr CGFloat RNSZoomOpenBackdropFullAt = 0.85;
 
 // Ease-out cubic: 1 - (1-t)^3. Ports both JS curves that shared this math —
@@ -261,7 +261,8 @@ static void RNSZoomCollectViewsByNativeID(UIView *root, NSString *nativeID, int 
 
 // ===== RNSZOOM DEBUG SWITCH (set NO / 1.0 before shipping) =====
 // Borders: red = flying stand-in, blue = real shelf card; the reader loading cover's
-// green border lives in JS (bookwise ReaderZoomLoadingCover, COVER_ZOOM_DEBUG).
+// green border lives in JS (bookwise ReaderZoomLoadingCover, COVER_ZOOM_DEBUG —
+// feature branch artemlitch/native-book-zoom).
 // The borders (only) are also available at runtime via the screen's
 // zoomShowDebugBorders prop — no rebuild needed; this compile switch additionally
 // gates the entry NSLogs and the slow-motion container speed below.
@@ -319,8 +320,8 @@ static void RNSZoomRemoveOpacityRamp(UIView *_Nullable view)
 }
 
 // Presentation-side page fade shared by the close flights: the page fades out over
-// COVER_ZOOM_CLOSE_FADE within `duration`, and Fabric commits mid-close can't
-// restore it (see RNSZoomAddOpacityRamp).
+// `fadeDuration` (COVER_ZOOM_CLOSE_FADE_MS by default) within `duration`, and Fabric
+// commits mid-close can't restore it (see RNSZoomAddOpacityRamp).
 static void RNSZoomAddPageFadeRamp(UIView *view, NSTimeInterval duration, NSTimeInterval fadeDuration)
 {
   const CGFloat pageFadeFraction = MIN(fadeDuration / MAX(duration, 0.01), 1.0);
@@ -341,11 +342,13 @@ static void RNSZoomAddPageFadeRamp(UIView *view, NSTimeInterval duration, NSTime
   // UIView's maskView getter must never be called on a Fabric view — RN assigns
   // layer.mask from a view it doesn't retain, so the getter can return a freed object.
   CALayer *_Nullable _zoomMaskLayer;
-  // The dimming view of the current zoom transition (all paths) and the interactive
-  // progress carrier — tracked so animationEnded:'s backstop can remove them on an
-  // abnormal teardown; normal completions remove them first (double-remove no-ops).
+  // The dimming view of the current zoom transition (all paths), the interactive
+  // progress carrier, and the masked-fallback's screen view — tracked so
+  // animationEnded:'s backstop can clean them up on an abnormal teardown; normal
+  // completions clean them first (double-clean no-ops).
   __weak UIView *_zoomDimmingView;
   __weak UIView *_zoomProgressCarrier;
+  __weak UIView *_zoomMaskedView;
   RNSZoomScreenGeometry _zoomScreenGeometry;
   // Card flight state (snapshot stand-in).
   RNSZoomCardGeometry _zoomCardGeometry;
@@ -469,6 +472,12 @@ static void RNSZoomAddPageFadeRamp(UIView *view, NSTimeInterval duration, NSTime
   _zoomDimmingView = nil;
   [_zoomProgressCarrier removeFromSuperview];
   _zoomProgressCarrier = nil;
+  UIView *maskedView = _zoomMaskedView;
+  _zoomMaskedView = nil;
+  if (maskedView != nil) {
+    maskedView.maskView = nil;
+    maskedView.transform = CGAffineTransformIdentity;
+  }
   _zoomSlowedLayer.speed = 1.0;
   _zoomSlowedLayer = nil;
   // Same backstop for the drag state the interactive carrier normally cleans up:
@@ -892,6 +901,7 @@ static void RNSZoomAddFlightKeyframes(UIView *_Nullable revealView, CGFloat reve
   maskView.backgroundColor = [UIColor blackColor];
   maskView.layer.cornerCurve = kCACornerCurveContinuous;
 
+  _zoomMaskedView = animatedView;
   [UIView performWithoutAnimation:^{
     animatedView.maskView = maskView;
     [self applyZoomFlightPose:initialAt toView:animatedView maskView:maskView dimmingView:dimmingView];
@@ -1023,6 +1033,8 @@ static void RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
     if (!RNSZoomDebugEnabled && !self->_animatedScreen.zoomShowDebugBorders) {
       // Borders off: drop a card border a previous debug transition left behind
       // (it lives on the Fabric-owned card and would otherwise persist until remount).
+      // Only runs when a stand-in is built; if every later transition takes the
+      // masked/fade path the border rides until remount — accepted for a debug tool.
       [[cardView viewWithTag:RNSZoomDebugCardBorderTag] removeFromSuperview];
     } else {
       UIView *debugFlyingPaint = [[UIView alloc] initWithFrame:standIn.bounds];
@@ -1163,10 +1175,7 @@ static void RNSZoomCompleteTransition(
   _zoomScreenGeometry = geometry;
 
   // The card flight needs the real card view; fall back to the screen zoom without it.
-  UIView *cardView = nil;
-  if (screen.zoomSourceViewNativeID.length > 0 && belowView != nil) {
-    cardView = RNSZoomFindViewByNativeID(belowView, screen.zoomSourceViewNativeID, 0);
-  }
+  UIView *cardView = [self zoomFindSourceCardIn:belowView];
   _zoomCardGeometry.slotRect = sourceRect;
   _zoomCardGeometry.alignmentRect = alignmentRect;
 
@@ -1360,7 +1369,7 @@ static void RNSZoomCompleteTransition(
   }
 
   if (standIn != nil) {
-    // Card-flight close: the page fades out in place (COVER_ZOOM_CLOSE_FADE) while the
+    // Card-flight close: the page fades out in place (COVER_ZOOM_CLOSE_FADE_MS) while the
     // snapshot stand-in materialises at the reader pose (fading in over the first
     // revealFraction of the flight) and flies home with the overshoot arc. Landing restores the real card's
     // alpha in the same transaction that removes the stand-in — seamless.
@@ -1419,24 +1428,42 @@ static void RNSZoomCompleteTransition(
   return _isZoomInteractive;
 }
 
-// A completed push leaves the real shelf card session-hidden (model alpha 0), and the
-// card-flight handoff on pop is what restores it. Pops that DON'T fly the card (fade
-// degrade, masked fallbacks) must restore it here, or the card stays invisible until
-// Fabric happens to remount it — the model value is what's wrong, so Fabric alone
-// can't repair it.
-- (void)zoomRestoreSessionHiddenCardIn:(UIView *_Nullable)belowView
+// Guarded source-card lookup shared by the flight setup, the commit-flight re-find,
+// and the restores below.
+- (UIView *_Nullable)zoomFindSourceCardIn:(UIView *_Nullable)belowView
 {
   RNSScreenView *screen = _animatedScreen;
   if (screen.zoomSourceViewNativeID.length == 0 || belowView == nil) {
-    return;
+    return nil;
   }
-  UIView *cardView = RNSZoomFindViewByNativeID(belowView, screen.zoomSourceViewNativeID, 0);
+  return RNSZoomFindViewByNativeID(belowView, screen.zoomSourceViewNativeID, 0);
+}
+
+// Library-owned invariant: a completed zoom push leaves the real source card
+// session-hidden (model alpha 0), and only a zoom pop's card-flight handoff restores
+// it — the model value is what's wrong, so Fabric alone can't repair it. This class
+// method is the single restore primitive; RNSScreenView calls it when a zoom-marked
+// screen leaves the window by ANY route (non-animated pop, replace/state reset,
+// multi-level pop past the shelf, a changed stackAnimation).
++ (void)restoreZoomSourceCardWithNativeID:(NSString *)nativeID inView:(UIView *)root
+{
+  UIView *cardView = RNSZoomFindViewByNativeID(root, nativeID, 0);
   if (cardView != nil && cardView.alpha < 1) {
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
     RNSZoomReleaseOpacityHold(cardView);
     cardView.alpha = 1.0;
     [CATransaction commit];
+  }
+}
+
+// Zoom pops that DON'T fly the card (fade degrade, masked fallbacks) restore the
+// session-hidden card here so it never waits for the window-teardown backstop.
+- (void)zoomRestoreSessionHiddenCardIn:(UIView *_Nullable)belowView
+{
+  RNSScreenView *screen = _animatedScreen;
+  if (screen.zoomSourceViewNativeID.length > 0 && belowView != nil) {
+    [RNSScreenStackAnimator restoreZoomSourceCardWithNativeID:screen.zoomSourceViewNativeID inView:belowView];
   }
 }
 
@@ -1466,7 +1493,9 @@ static void RNSZoomCompleteTransition(
   [CATransaction begin];
   [CATransaction setDisableActions:YES];
   // Fabric prop commits mid-drag (e.g. the close-target retarget once the book
-  // loads) reset the screen's transform and layer.mask; re-assert both each frame.
+  // loads) reset the screen's transform and layer.mask; re-assert both on every pan
+  // event (a commit while the finger is stationary can flash until the next move —
+  // not observed in practice; the retarget commits land during active drags).
   // Comparing/assigning bare CALayers is safe — layer.mask retains its layer.
   if (animatedView.layer.mask != maskLayer) {
     maskLayer.frame = animatedView.layer.bounds;
@@ -1503,8 +1532,8 @@ static void RNSZoomCompleteTransition(
   // the geometry from the current props.
   RNSScreenView *screen = _animatedScreen;
   UIView *belowView = _zoomBelowView;
-  if (cardView == nil && screen != nil && screen.zoomSourceViewNativeID.length > 0 && belowView != nil) {
-    cardView = RNSZoomFindViewByNativeID(belowView, screen.zoomSourceViewNativeID, 0);
+  if (cardView == nil) {
+    cardView = [self zoomFindSourceCardIn:belowView];
   }
   if (cardView != nil && screen != nil && animatedView.superview != nil) {
     CGRect sourceRectInWindow = RNSZoomRectFromDictionary(screen.zoomSourceRect);

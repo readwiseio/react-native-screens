@@ -19,6 +19,12 @@
 
 + (BOOL)isCustomAnimation:(RNSScreenStackAnimation)animation;
 
+/// Restores a zoom source card the completed push left session-hidden (alpha 0).
+/// Called by RNSScreenView when a zoom-marked screen leaves the window by any route
+/// that bypasses the zoom pop's own handoff (non-animated pop, replace, multi-level
+/// pop, changed stackAnimation). Safe no-op when the card isn't found or is visible.
++ (void)restoreZoomSourceCardWithNativeID:(nonnull NSString *)nativeID inView:(nonnull UIView *)root;
+
 #pragma mark - Zoom interactive dismissal
 
 /// YES for the lifetime of an interactive zoom pop — from drag begin until the

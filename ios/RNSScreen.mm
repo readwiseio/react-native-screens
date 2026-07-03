@@ -31,6 +31,7 @@
 #import "RNSConversions.h"
 #import "RNSScreenFooter.h"
 #import "RNSScreenStack.h"
+#import "RNSScreenStackAnimator.h"
 #import "RNSScreenStackHeaderConfig.h"
 #import "RNSScrollViewHelper.h"
 #import "RNSTabBarController.h"
@@ -680,6 +681,22 @@ RNS_IGNORE_SUPER_CALL_END
   }
   return NO;
 #undef RNS_EXPECTED_VIEW
+}
+
+- (void)willMoveToWindow:(UIWindow *)newWindow
+{
+  [super willMoveToWindow:newWindow];
+  // Readwise: library-owned invariant for the zoom animation. A completed zoom push
+  // leaves the source card session-hidden (model alpha 0), normally restored by the
+  // zoom pop's handoff. When this screen leaves the window by any OTHER route
+  // (non-animated pop, replace/state reset, multi-level pop past the shelf, a changed
+  // stackAnimation), restore the card here — Fabric can't repair it (the model value
+  // is what's wrong). Searching from the outgoing window covers cards anywhere in the
+  // stack; benign extra fires (e.g. detach with the reader still open) are harmless —
+  // the next zoom flight re-hides the card in its own transaction.
+  if (newWindow == nil && _zoomSourceViewNativeID.length > 0 && self.window != nil) {
+    [RNSScreenStackAnimator restoreZoomSourceCardWithNativeID:_zoomSourceViewNativeID inView:self.window];
+  }
 }
 
 - (void)didMoveToWindow
