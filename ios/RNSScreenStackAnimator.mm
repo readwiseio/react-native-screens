@@ -44,10 +44,13 @@ static constexpr CGFloat RNSZoomBaseReaderRadius = 16;
 static constexpr CGFloat RNSZoomDeviceCornerRadius = 52;
 static constexpr NSTimeInterval RNSZoomCancelSpringDuration = 0.36;
 static constexpr CGFloat RNSZoomCancelSpringDamping = 0.82;
+
+// Native keyframe sampling resolution (no JS counterpart — Reanimated is continuous).
 static constexpr int RNSZoomKeyframeCount = 24;
 // The push backdrop (the page, behind the flying stand-in) reaches full opacity at
 // this fraction of the eased progress. Ported from the legacy JS overlay's
-// [0, 0.85] progress interpolation (the overlay file was deleted with the JS flight).
+// [0, 0.85] progress interpolation (the overlay was removed by the zoom feature
+// branch, artemlitch/native-book-zoom).
 static constexpr CGFloat RNSZoomOpenBackdropFullAt = 0.85;
 
 // Ease-out cubic: 1 - (1-t)^3. Ports both JS curves that shared this math —
@@ -202,7 +205,8 @@ static CGAffineTransform RNSZoomArcLerpTransform(RNSZoomPose from, RNSZoomPose t
 }
 
 // JS <-> native contract: the app tags views with these nativeIDs so the animator can
-// find them (bookwise sets both — ReaderZoomLoadingCover tags its cover box as the
+// find them (bookwise sets both on the zoom feature branch
+// artemlitch/native-book-zoom — ReaderZoomLoadingCover tags its cover box as the
 // dest cover; DocumentCover tags badge overlays). DestCover = the reader's own cover
 // at the landing pose; CoverBadge = card overlays that must not appear in the flight
 // snapshot (only the pure cover flies).
@@ -337,7 +341,11 @@ static void RNSZoomAddPageFadeRamp(UIView *view, NSTimeInterval duration, NSTime
   // UIView's maskView getter must never be called on a Fabric view — RN assigns
   // layer.mask from a view it doesn't retain, so the getter can return a freed object.
   CALayer *_Nullable _zoomMaskLayer;
+  // The dimming view of the current zoom transition (all paths) and the interactive
+  // progress carrier — tracked so animationEnded:'s backstop can remove them on an
+  // abnormal teardown; normal completions remove them first (double-remove no-ops).
   __weak UIView *_zoomDimmingView;
+  __weak UIView *_zoomProgressCarrier;
   RNSZoomScreenGeometry _zoomScreenGeometry;
   // Card flight state (snapshot stand-in).
   RNSZoomCardGeometry _zoomCardGeometry;
@@ -457,6 +465,10 @@ static void RNSZoomAddPageFadeRamp(UIView *view, NSTimeInterval duration, NSTime
   [self zoomFinishCardFlightSettingCardAlpha:pushCompleted ? 0.0 : 1.0];
   RNSZoomRemoveOpacityRamp(_zoomRampedView);
   _zoomRampedView = nil;
+  [_zoomDimmingView removeFromSuperview];
+  _zoomDimmingView = nil;
+  [_zoomProgressCarrier removeFromSuperview];
+  _zoomProgressCarrier = nil;
   _zoomSlowedLayer.speed = 1.0;
   _zoomSlowedLayer = nil;
   // Same backstop for the drag state the interactive carrier normally cleans up:
@@ -1117,7 +1129,11 @@ static void RNSZoomCompleteTransition(
   CGRect alignmentRect = RNSZoomRectFromDictionary(screen.zoomAlignmentRect);
 
   if (CGRectIsNull(sourceRectInWindow) || CGRectIsNull(alignmentRect)) {
-    // Without valid rects there is nothing to zoom from/to — degrade to a fade.
+    // Without valid rects there is nothing to zoom from/to — degrade to a fade. On a
+    // pop, first restore a card the completed push left session-hidden.
+    if (_operation == UINavigationControllerOperationPop) {
+      [self zoomRestoreSessionHiddenCardIn:belowView];
+    }
     [self animateFadeWithTransitionContext:transitionContext toVC:toViewController fromVC:fromViewController];
     return;
   }
@@ -1183,6 +1199,8 @@ static void RNSZoomCompleteTransition(
   UIView *dimmingView = [[UIView alloc] initWithFrame:container.bounds];
   dimmingView.backgroundColor = [UIColor blackColor];
   dimmingView.alpha = 0.0;
+  // Tracked so animationEnded:'s backstop can remove it on an abnormal teardown.
+  _zoomDimmingView = dimmingView;
 
   // performWithoutAnimation: an enclosing UIView animation block (status-bar hide)
   // must not capture these setup writes as implicit animations.
@@ -1262,6 +1280,8 @@ static void RNSZoomCompleteTransition(
   UIView *container = transitionContext.containerView;
   UIView *dimmingView = [[UIView alloc] initWithFrame:container.bounds];
   dimmingView.backgroundColor = [UIColor blackColor];
+  // Tracked so animationEnded:'s backstop can remove it on an abnormal teardown.
+  _zoomDimmingView = dimmingView;
 
   [UIView performWithoutAnimation:^{
     toView.transform = CGAffineTransformIdentity;
@@ -1281,7 +1301,6 @@ static void RNSZoomCompleteTransition(
     // (startZoomCommitFlight) if the card view is available.
     _isZoomInteractive = YES;
     _zoomAnimatedView = animatedView;
-    _zoomDimmingView = dimmingView;
     _zoomPendingCardView = cardView;
     _zoomBelowView = toView;
     // A lingering cancel-spring from a previous grab must not fight the new drag.
@@ -1299,6 +1318,7 @@ static void RNSZoomCompleteTransition(
     // transition before the commit flight lands), but nothing visible may ride it.
     UIView *progressCarrier = [[UIView alloc] initWithFrame:CGRectZero];
     progressCarrier.userInteractionEnabled = NO;
+    _zoomProgressCarrier = progressCarrier;
     [UIView performWithoutAnimation:^{
       [container addSubview:progressCarrier];
     }];
@@ -1380,6 +1400,8 @@ static void RNSZoomCompleteTransition(
   // Fallback: masked screen zoom back into the source rect, with the exact
   // CLOSE_FLIGHT_EASING (overshoot) + arc after the reveal delay. Also the landing
   // spot when the card snapshot fails (nil stand-in) — mirrors the push path.
+  // No card flight here, so restore a card the completed push left session-hidden.
+  [self zoomRestoreSessionHiddenCardIn:toView];
   [self runMaskedZoomFlightWithContext:transitionContext
                           animatedView:animatedView
                            dimmingView:dimmingView
@@ -1395,6 +1417,27 @@ static void RNSZoomCompleteTransition(
 - (BOOL)isZoomInteractive
 {
   return _isZoomInteractive;
+}
+
+// A completed push leaves the real shelf card session-hidden (model alpha 0), and the
+// card-flight handoff on pop is what restores it. Pops that DON'T fly the card (fade
+// degrade, masked fallbacks) must restore it here, or the card stays invisible until
+// Fabric happens to remount it — the model value is what's wrong, so Fabric alone
+// can't repair it.
+- (void)zoomRestoreSessionHiddenCardIn:(UIView *_Nullable)belowView
+{
+  RNSScreenView *screen = _animatedScreen;
+  if (screen.zoomSourceViewNativeID.length == 0 || belowView == nil) {
+    return;
+  }
+  UIView *cardView = RNSZoomFindViewByNativeID(belowView, screen.zoomSourceViewNativeID, 0);
+  if (cardView != nil && cardView.alpha < 1) {
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    RNSZoomReleaseOpacityHold(cardView);
+    cardView.alpha = 1.0;
+    [CATransaction commit];
+  }
 }
 
 // Single source for the cancel spring's duration: zoomCancelDurationScale's contract
@@ -1527,6 +1570,8 @@ static void RNSZoomCompleteTransition(
 
   // Fallback: fly the page home from the release pose (closeInteractiveStyle). The
   // drag mask layer keeps the release corners; only the transform animates.
+  // No card flight, so restore a card the completed push left session-hidden.
+  [self zoomRestoreSessionHiddenCardIn:_zoomBelowView];
   const RNSZoomScreenGeometry g = _zoomScreenGeometry;
   const RNSZoomPose releasePose = {pageScale, dragTX, dragTY};
   const RNSZoomPose shelfPose = {g.shelfScale, g.shelfTX, g.shelfTY};

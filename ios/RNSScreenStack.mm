@@ -981,6 +981,8 @@ RNS_IGNORE_SUPER_CALL_END
     // the left-edge strip may begin the dismiss (JS DISMISS_EDGE_WIDTH / activation
     // filter); anything else falls through to the reader's own gestures.
     if (topScreen.stackAnimation == RNSScreenStackAnimationZoom && topScreen.zoomDismissEdgeOnly) {
+      // LTR-only by app contract (Bookwise does not ship RTL); upstream's edge
+      // recognizer mirrors under RTL if that ever changes.
       static const CGFloat RNSZoomDismissEdgeWidth = 40;
       UIPanGestureRecognizer *panRecognizer = (UIPanGestureRecognizer *)gestureRecognizer;
       CGPoint location = [panRecognizer locationInView:panRecognizer.view];
@@ -1126,8 +1128,9 @@ RNS_IGNORE_SUPER_CALL_END
 // Interactive dismiss for the zoom animation. The pan drives the screen pose manually
 // through the zoom animator (finger-follow + eased shrink, the JS dismissDrag port);
 // the interaction controller only scrubs the invisible progress carrier (UIKit
-// progress); the dim deliberately holds its resting alpha until the commit flight /
-// cancel spring (scrubbing it made the release visibly snap).
+// progress); the dim deliberately holds its resting alpha until the commit flight
+// fades it (a cancelled drag keeps it resting until removal at transition end;
+// scrubbing it made the release visibly snap).
 // While the book loads the drag works from anywhere in any direction; once loaded
 // (zoomDismissEdgeOnly) only a rightward pull from the left-edge strip starts it
 // (gated in gestureRecognizerShouldBegin) and progress tracks the horizontal pull.
@@ -1137,8 +1140,9 @@ RNS_IGNORE_SUPER_CALL_END
   static const float RNSZoomCommitDistance = 90.f;
   static const float RNSZoomEdgeCommitDistance = 95.f;
   static const float RNSZoomCommitVelocity = 700.f;
-  // JS port: full drag progress spans 92% of the screen width (the deleted
-  // useReaderDismissGesture / useReaderCoverDismissGesture hooks).
+  // JS port: full drag progress spans 92% of the screen width (the
+  // useReaderDismissGesture / useReaderCoverDismissGesture hooks, removed by the
+  // zoom feature branch, artemlitch/native-book-zoom).
   static const float RNSZoomProgressSpanFraction = 0.92f;
   // fractionComplete == 1 would complete the carrier animator mid-gesture; cap just under.
   static const float RNSZoomMaxScrubProgress = 0.99f;
@@ -1151,6 +1155,8 @@ RNS_IGNORE_SUPER_CALL_END
   BOOL edgeOnly = _zoomSwipeEdgeOnly;
 
   float dragDistance = edgeOnly ? MAX((float)translation.x, 0.f) : (float)hypot(translation.x, translation.y);
+  // Any-direction velocity is a MAGNITUDE, as in the JS hook (dragMagnitude of the
+  // velocity vector) — a fast flick in any direction commits, including backwards.
   float dragVelocity = edgeOnly ? (float)velocity.x : (float)hypot(velocity.x, velocity.y);
   float commitDistance = edgeOnly ? RNSZoomEdgeCommitDistance : RNSZoomCommitDistance;
   float progressDistance = MAX((float)gestureRecognizer.view.bounds.size.width * RNSZoomProgressSpanFraction, 1.f);

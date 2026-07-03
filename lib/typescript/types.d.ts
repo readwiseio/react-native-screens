@@ -114,7 +114,9 @@ export interface ScreenProps extends ViewProps {
      */
     zoomAlignmentRect?: ZoomTransitionRectType;
     /**
-     * Readwise: corner radius of the source view, so the zoom mask matches it at the source end.
+     * Readwise: corner radius of the source view — used only by the masked screen-zoom
+     * FALLBACK (no source card found / snapshot failed); the card flight bakes the
+     * card's real corners into the stand-in.
      *
      * @platform ios
      */
@@ -371,8 +373,10 @@ export interface ScreenProps extends ViewProps {
      * first one, not the selected detent. With the default detents (`[1.0]`) that is the
      * full window height; the native 0.85 fallback only applies when the first detent is
      * non-positive (e.g. `fitToContents`).
-     * Works only when `stackPresentation` is set to `formSheet` or `pageSheet`.
-     * Defaults to `0` (no constraint).
+     * On pageSheet, an active sheetMaxWidth/sheetBottomInset also applies the formSheet
+     * detent/grabber/corner handling to the sheet (and that part stays applied after
+     * the props reset to 0). Works only when `stackPresentation` is set to `formSheet`
+     * or `pageSheet`. Defaults to `0` (no constraint).
      *
      * @platform ios
      */

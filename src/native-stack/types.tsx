@@ -201,7 +201,8 @@ export type NativeStackNavigationOptions = {
    */
   zoomAlignmentRect?: ScreenProps['zoomAlignmentRect'];
   /**
-   * Readwise: corner radius of the source view for the zoom transition mask.
+   * Readwise: corner radius of the source view (masked screen-zoom fallback only —
+   * the card flight bakes the card's real corners into the stand-in).
    *
    * @platform ios
    */
