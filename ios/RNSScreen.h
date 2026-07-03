@@ -108,6 +108,9 @@ namespace react = facebook::react;
 @property (nonatomic) CGFloat zoomClosePageFadeMs;
 @property (nonatomic) CGFloat zoomCommitRevealMs;
 @property (nonatomic) CGFloat zoomCancelSpringMs;
+// Back-easing coefficient for the close landing's squash-and-recover bounce
+// (unitless, not ms); non-positive keeps the built-in default (1.1).
+@property (nonatomic) CGFloat zoomCloseOvershoot;
 // Paints the zoom debug borders (red = flying stand-in, blue = real card) for this
 // screen's transitions at runtime — no rebuild needed, unlike RNSZoomDebugEnabled.
 @property (nonatomic) BOOL zoomShowDebugBorders;

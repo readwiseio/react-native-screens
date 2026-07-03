@@ -1434,6 +1434,10 @@ RNS_IGNORE_SUPER_CALL_END
     [self setZoomCancelSpringMs:newScreenProps.zoomCancelSpringMs];
   }
 
+  if (newScreenProps.zoomCloseOvershoot != oldScreenProps.zoomCloseOvershoot) {
+    [self setZoomCloseOvershoot:newScreenProps.zoomCloseOvershoot];
+  }
+
   if (newScreenProps.zoomShowDebugBorders != oldScreenProps.zoomShowDebugBorders) {
     [self setZoomShowDebugBorders:newScreenProps.zoomShowDebugBorders];
   }
@@ -2238,6 +2242,7 @@ RCT_EXPORT_VIEW_PROPERTY(zoomCloseRevealMs, CGFloat)
 RCT_EXPORT_VIEW_PROPERTY(zoomClosePageFadeMs, CGFloat)
 RCT_EXPORT_VIEW_PROPERTY(zoomCommitRevealMs, CGFloat)
 RCT_EXPORT_VIEW_PROPERTY(zoomCancelSpringMs, CGFloat)
+RCT_EXPORT_VIEW_PROPERTY(zoomCloseOvershoot, CGFloat)
 RCT_EXPORT_VIEW_PROPERTY(zoomShowDebugBorders, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(hideKeyboardOnSwipe, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(preventNativeDismiss, BOOL)

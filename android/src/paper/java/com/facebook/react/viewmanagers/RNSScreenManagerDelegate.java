@@ -124,6 +124,9 @@ public class RNSScreenManagerDelegate<T extends View, U extends BaseViewManager<
       case "zoomCancelSpringMs":
         mViewManager.setZoomCancelSpringMs(view, value == null ? 0f : ((Double) value).floatValue());
         break;
+      case "zoomCloseOvershoot":
+        mViewManager.setZoomCloseOvershoot(view, value == null ? 0f : ((Double) value).floatValue());
+        break;
       case "zoomShowDebugBorders":
         mViewManager.setZoomShowDebugBorders(view, value == null ? false : (boolean) value);
         break;

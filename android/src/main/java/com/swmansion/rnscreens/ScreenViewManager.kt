@@ -438,6 +438,11 @@ open class ScreenViewManager :
         value: Float,
     ) = Unit
 
+    override fun setZoomCloseOvershoot(
+        view: Screen?,
+        value: Float,
+    ) = Unit
+
     override fun setZoomShowDebugBorders(
         view: Screen?,
         value: Boolean,

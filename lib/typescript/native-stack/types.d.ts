@@ -220,6 +220,13 @@ export type NativeStackNavigationOptions = {
     /** Readwise: see `zoomCloseFlightDelayMs`. @platform ios */
     zoomCancelSpringMs?: ScreenProps['zoomCancelSpringMs'];
     /**
+     * Readwise: back-easing coefficient for the close landing's squash-and-recover
+     * bounce (unitless). Non-positive keeps the default (1.1).
+     *
+     * @platform ios
+     */
+    zoomCloseOvershoot?: ScreenProps['zoomCloseOvershoot'];
+    /**
      * Readwise: paints the zoom debug borders for this screen's transitions at runtime.
      *
      * @platform ios

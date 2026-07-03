@@ -61,11 +61,15 @@ static inline CGFloat RNSZoomEaseOutCubic(CGFloat t)
   return 1 - inv * inv * inv;
 }
 
-// CLOSE_FLIGHT_EASING: back-out with a slight overshoot past the source pose.
-static inline CGFloat RNSZoomCloseEasing(CGFloat t)
+// CLOSE_FLIGHT_EASING: back-out with an overshoot past the source pose. `s` is the
+// back coefficient (zoomCloseOvershoot prop, RNSZoomCloseOvershoot default): the
+// eased value exceeds 1 near the landing, which the pose lerp turns into the
+// squash-and-recover bounce (translation is pinned at the slot — see
+// RNSZoomArcLerpTransform — so only the scale dips).
+static inline CGFloat RNSZoomCloseEasing(CGFloat t, CGFloat s)
 {
   const CGFloat p = t - 1;
-  return 1 + (RNSZoomCloseOvershoot + 1) * p * p * p + RNSZoomCloseOvershoot * p * p;
+  return 1 + (s + 1) * p * p * p + s * p * p;
 }
 
 // arcCurve: linear passthrough outside [0,1] (negative bases would NaN under pow).
@@ -79,12 +83,12 @@ static inline CGFloat RNSZoomArcCurve(CGFloat t, CGFloat exponent)
 
 // CLOSE_FLIGHT_EASING gated behind the close flight delay: 0 until `delayFraction`,
 // then the overshoot curve over the remaining span. Shared by both close paths.
-static inline CGFloat RNSZoomDelayedCloseEasing(CGFloat t, CGFloat delayFraction)
+static inline CGFloat RNSZoomDelayedCloseEasing(CGFloat t, CGFloat delayFraction, CGFloat overshoot)
 {
   if (t <= delayFraction) {
     return 0;
   }
-  return RNSZoomCloseEasing((t - delayFraction) / (1 - delayFraction));
+  return RNSZoomCloseEasing((t - delayFraction) / (1 - delayFraction), overshoot);
 }
 
 static inline CGFloat RNSZoomLerp(CGFloat from, CGFloat to, CGFloat t)
@@ -166,6 +170,13 @@ static inline NSTimeInterval RNSZoomDuration(CGFloat overrideMs, NSTimeInterval 
   return overrideMs > 0 ? overrideMs / 1000.0 : fallback;
 }
 
+// Per-screen close-overshoot override (the back-easing coefficient, unitless);
+// non-positive keeps the default.
+static inline CGFloat RNSZoomOvershoot(CGFloat override)
+{
+  return override > 0 ? override : RNSZoomCloseOvershoot;
+}
+
 // Geometry for the card flight: a snapshot stand-in of the cover (the real card is
 // never reparented — Fabric owns it; see zoomMakeStandInFromCardView) flies between
 // the slot rect and the alignment rect.
@@ -197,12 +208,15 @@ static const RNSZoomPose RNSZoomIdentityPose = {1, 0, 0};
 // Arc-split pose interpolation — the single transform builder for every zoom flight.
 // Y's interpolant lags X's in `at` space (RNSZoomArcCurve), so Y leads the open
 // flight (at 1 -> 0) and X leads the close (at 0 -> 1) — same arc, traversed in
-// reverse; scale lerps on `at` directly. `at` may exceed 1 on the close overshoot
-// (lerps extrapolate linearly).
+// reverse; scale lerps on `at` directly. `at` exceeds 1 on the close overshoot:
+// translation PINS at the target pose while scale keeps extrapolating, so the
+// landing reads as a squash-and-recover bounce at the slot rather than the card
+// sliding past it and back.
 static CGAffineTransform RNSZoomArcLerpTransform(RNSZoomPose from, RNSZoomPose to, CGFloat at)
 {
-  const CGFloat atY = RNSZoomArcCurve(at, RNSZoomArcLeadExp);
-  const CGFloat atX = RNSZoomArcCurve(at, RNSZoomArcTrailExp);
+  const CGFloat translationAt = MIN(at, 1);
+  const CGFloat atY = RNSZoomArcCurve(translationAt, RNSZoomArcLeadExp);
+  const CGFloat atX = RNSZoomArcCurve(translationAt, RNSZoomArcTrailExp);
   const CGFloat scale = MAX(RNSZoomLerp(from.scale, to.scale, at), 0.001);
   return CGAffineTransformScale(
       CGAffineTransformMakeTranslation(RNSZoomLerp(from.tx, to.tx, atX), RNSZoomLerp(from.ty, to.ty, atY)),
@@ -858,7 +872,9 @@ static void RNSZoomAddPageFadeRamp(UIView *view, NSTimeInterval duration, NSTime
 
 // Pose along the open/close flight, in "at" space (0 = reader pose, 1 = shelf/source
 // pose). X trails and Y leads via the arc curve; scale/mask lerp on `at` directly.
-// `at` may exceed 1 slightly on the close overshoot — lerps extrapolate linearly.
+// `at` may exceed 1 on the close overshoot: the transform squashes (translation
+// pinned — see RNSZoomArcLerpTransform) while the mask holds its landed frame, so
+// only the content bounces.
 // Used by the screen-zoom FALLBACK (source card view not found).
 - (void)applyZoomFlightPose:(CGFloat)at
                      toView:(UIView *)animatedView
@@ -867,9 +883,10 @@ static void RNSZoomAddPageFadeRamp(UIView *view, NSTimeInterval duration, NSTime
 {
   const RNSZoomScreenGeometry g = _zoomScreenGeometry;
   const RNSZoomPose shelfPose = {g.shelfScale, g.shelfTX, g.shelfTY};
+  const CGFloat maskAt = MIN(at, 1);
   animatedView.transform = RNSZoomArcLerpTransform(RNSZoomIdentityPose, shelfPose, at);
-  maskView.frame = RNSZoomLerpRect(g.viewBounds, g.alignmentRect, at);
-  maskView.layer.cornerRadius = MAX(RNSZoomLerp(RNSZoomBaseReaderRadius, g.maskSourceCornerRadius, at), 0);
+  maskView.frame = RNSZoomLerpRect(g.viewBounds, g.alignmentRect, maskAt);
+  maskView.layer.cornerRadius = MAX(RNSZoomLerp(RNSZoomBaseReaderRadius, g.maskSourceCornerRadius, maskAt), 0);
   dimmingView.alpha = RNSZoomDimAlphaAt(at);
 }
 
@@ -998,6 +1015,13 @@ static void RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
   const CGRect alignmentRect = _zoomCardGeometry.alignmentRect;
   CGRect wrapperInContainer = [cardView.superview convertRect:cardView.frame toView:container];
   if (CGRectIsEmpty(cardView.bounds) || CGRectIsEmpty(alignmentRect) || CGRectGetWidth(slotRect) < 1) {
+    if (RNSZoomDebugEnabled) {
+      NSLog(
+          @"RNSZOOM standIn nil: cardBounds=%@ alignment=%@ slot=%@",
+          NSStringFromCGRect(cardView.bounds),
+          NSStringFromCGRect(alignmentRect),
+          NSStringFromCGRect(slotRect));
+    }
     return nil;
   }
   // The transition can start while some other UIView animation block is still open on
@@ -1420,9 +1444,10 @@ static void RNSZoomCompleteTransition(
     UIViewPropertyAnimator *animator = [[UIViewPropertyAnimator alloc] initWithDuration:totalDuration
                                                                                   curve:UIViewAnimationCurveLinear
                                                                              animations:nil];
+    const CGFloat overshoot = RNSZoomOvershoot(screenForTiming.zoomCloseOvershoot);
     [animator addAnimations:^{
       RNSZoomAddFlightKeyframes(standIn, revealFraction, ^(CGFloat t) {
-        const CGFloat at = RNSZoomDelayedCloseEasing(t, delayFraction);
+        const CGFloat at = RNSZoomDelayedCloseEasing(t, delayFraction, overshoot);
         standIn.transform = [weakSelf zoomCardTransformForAt:at];
         dimmingView.alpha = RNSZoomDimAlphaAt(at);
       });
@@ -1440,13 +1465,14 @@ static void RNSZoomCompleteTransition(
   // spot when the card snapshot fails (nil stand-in) — mirrors the push path.
   // No card flight here, so restore a card the completed push left session-hidden.
   [self zoomRestoreSessionHiddenCardIn:toView];
+  const CGFloat overshoot = RNSZoomOvershoot(screenForTiming.zoomCloseOvershoot);
   [self runMaskedZoomFlightWithContext:transitionContext
                           animatedView:animatedView
                            dimmingView:dimmingView
                               duration:totalDuration
                              initialAt:0
                                easedAt:^CGFloat(CGFloat t) {
-                                 return RNSZoomDelayedCloseEasing(t, delayFraction);
+                                 return RNSZoomDelayedCloseEasing(t, delayFraction, overshoot);
                                }];
 }
 
@@ -1586,6 +1612,14 @@ static void RNSZoomCompleteTransition(
     UIView *destCover = RNSZoomFindViewByNativeID(animatedView, RNSZoomDestCoverNativeID, 0);
     standIn = [self zoomMakeStandInFromCardView:cardView destCover:destCover inContainer:container];
   }
+  if (RNSZoomDebugEnabled && standIn == nil) {
+    NSLog(
+        @"RNSZOOM commit fallback: cardView=%p window=%p nativeID=%@ belowView=%p",
+        cardView,
+        animatedView.window,
+        screen.zoomSourceViewNativeID,
+        belowView);
+  }
   if (standIn != nil) {
     // The cover's embedded pose inside the shrunken, dragged page: the page scales
     // about the screen centre, so every point moves the same way. The flying view's
@@ -1618,9 +1652,10 @@ static void RNSZoomCompleteTransition(
     UIViewPropertyAnimator *flight = [[UIViewPropertyAnimator alloc] initWithDuration:_transitionDuration
                                                                                 curve:UIViewAnimationCurveLinear
                                                                            animations:nil];
+    const CGFloat overshoot = RNSZoomOvershoot(screen.zoomCloseOvershoot);
     [flight addAnimations:^{
       RNSZoomAddFlightKeyframes(standIn, revealFraction, ^(CGFloat t) {
-        const CGFloat cp = RNSZoomCloseEasing(t);
+        const CGFloat cp = RNSZoomCloseEasing(t, overshoot);
         standIn.transform = RNSZoomArcLerpTransform(releasePose, slot, cp);
         dimmingView.alpha = RNSZoomDimAlphaAt(cp);
       });
@@ -1640,9 +1675,10 @@ static void RNSZoomCompleteTransition(
   UIViewPropertyAnimator *flight = [[UIViewPropertyAnimator alloc] initWithDuration:_transitionDuration
                                                                               curve:UIViewAnimationCurveLinear
                                                                          animations:nil];
+  const CGFloat overshoot = RNSZoomOvershoot(screen.zoomCloseOvershoot);
   [flight addAnimations:^{
     RNSZoomAddFlightKeyframes(nil, 0, ^(CGFloat t) {
-      const CGFloat cp = RNSZoomCloseEasing(t);
+      const CGFloat cp = RNSZoomCloseEasing(t, overshoot);
       animatedView.transform = RNSZoomArcLerpTransform(releasePose, shelfPose, cp);
       dimmingView.alpha = RNSZoomDimAlphaAt(cp);
     });

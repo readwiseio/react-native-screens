@@ -252,6 +252,13 @@ export interface ScreenProps extends ViewProps {
    */
   zoomCancelSpringMs?: number;
   /**
+   * Readwise: back-easing coefficient for the close landing's squash-and-recover
+   * bounce (unitless — larger = deeper squash). Non-positive keeps the default (1.1).
+   *
+   * @platform ios
+   */
+  zoomCloseOvershoot?: number;
+  /**
    * Readwise: paints the zoom debug borders (red = flying stand-in, blue = real card)
    * for this screen's transitions — the runtime switch for the debug borders only;
    * the native RNSZoomDebugEnabled compile switch additionally gates logging and

@@ -59,18 +59,17 @@
   id<UITimingCurveProvider> timingParams = [_animationController timingParamsForAnimationCompletion];
 
   CGFloat durationFactor = 1 - animator.fractionComplete;
-  if (cancelled && _animationController.isZoomInteractive) {
+  if (_animationController.isZoomInteractive) {
     // The zoom drag drives the screen pose manually; the carrier (an invisible dummy
     // view) only holds the UIKit progress, and timingParamsForAnimationCompletion
-    // returns linear for it. VERIFIED with a timing probe (readwise fork PR #1,
-    // review round 4 — deep-drag commit at fraction 0.888): despite how the
-    // continueAnimation docs read, the
-    // observed remaining run time here is durationFactor x originalDuration
-    // / (1 - fractionComplete) — so the default (1 - fraction) factor above yields a
-    // CONSTANT remaining time of one full duration, matching the commit flight
-    // (factor 1.0 held the transition open for D / (1 - fraction) ~= 3.8s). Only the
-    // cancel case is scaled, to match the cancel spring instead.
-    durationFactor *= [_animationController zoomCancelDurationScale];
+    // returns linear for it. With linear params, continueAnimation follows the docs:
+    // remaining run time = durationFactor x originalDuration, independent of
+    // fractionComplete (timing probes: factor 0.417 -> 185ms, 0.311 -> 147ms,
+    // 0.175 -> 88ms of a 420ms carrier). The commit flight and the cancel spring
+    // both run their FULL duration from release, so the carrier must match — the
+    // default (1 - fraction) factor completes the transition early and the teardown
+    // amputates the flight (snap landings, no bounce).
+    durationFactor = cancelled ? [_animationController zoomCancelDurationScale] : 1.0;
   }
 
   [animator pauseAnimation];
