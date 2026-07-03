@@ -194,6 +194,7 @@ static void RNSZoomCollectViewsByNativeID(UIView *root, NSString *nativeID, int 
   }
 }
 
+
 @implementation RNSScreenStackAnimator {
   UINavigationControllerOperation _operation;
   NSTimeInterval _transitionDuration;
@@ -906,6 +907,10 @@ static BOOL RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
   _zoomCardGeometry.alignmentRect = alignmentRect;
 
   const NSTimeInterval duration = [self transitionDuration:transitionContext];
+  // The commit flight and cancel-scale math read _transitionDuration later (outside
+  // any transition context); keep it in sync with the screen's real duration, or the
+  // carrier completes before the flight and amputates the landing overshoot.
+  _transitionDuration = duration;
 
   if (_operation == UINavigationControllerOperationPush) {
     [self animateZoomPushWithContext:transitionContext
@@ -1217,6 +1222,7 @@ static BOOL RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
   _inFlightAnimator = animator;
   [animator startAnimation];
 }
+
 
 #pragma mark - Zoom interactive dismissal (driven from the stack's pan handler)
 
