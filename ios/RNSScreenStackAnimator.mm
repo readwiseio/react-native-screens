@@ -862,16 +862,46 @@ static void RNSZoomAddFlightKeyframes(UIView *_Nullable revealView, CGFloat reve
                             completion:nil];
 }
 
-// Keyframed masked-screen flight sampling the exact JS easing + arc math. `easedAt`
-// maps uniform time [0..1] to "at" space.
-- (void)addZoomFlightKeyframesToView:(UIView *)animatedView
-                            maskView:(UIView *)maskView
-                         dimmingView:(UIView *)dimmingView
-                             easedAt:(CGFloat (^)(CGFloat t))easedAt
+// Masked screen-zoom flight — the shared fallback for push and pop when there is no
+// source card / the stand-in snapshot fails. `easedAt` maps uniform time [0..1] to
+// "at" space; `initialAt` is the pre-flight pose (1 = shelf for the open, 0 = reader
+// for the close). maskView (not the drag path's bare-CALayer technique) is safe here:
+// the invariant at the _zoomMaskLayer declaration is about reading an RN-assigned
+// layer.mask mid-drag; RN never assigns its own mask to the screen view, and this
+// setter runs only at transition setup/teardown.
+- (void)runMaskedZoomFlightWithContext:(id<UIViewControllerContextTransitioning>)transitionContext
+                          animatedView:(UIView *)animatedView
+                           dimmingView:(UIView *)dimmingView
+                              duration:(NSTimeInterval)duration
+                             initialAt:(CGFloat)initialAt
+                               easedAt:(CGFloat (^)(CGFloat t))easedAt
 {
-  RNSZoomAddFlightKeyframes(nil, 0, ^(CGFloat t) {
-    [self applyZoomFlightPose:easedAt(t) toView:animatedView maskView:maskView dimmingView:dimmingView];
-  });
+  UIView *maskView = [[UIView alloc] init];
+  maskView.backgroundColor = [UIColor blackColor];
+  maskView.layer.cornerCurve = kCACornerCurveContinuous;
+
+  [UIView performWithoutAnimation:^{
+    animatedView.maskView = maskView;
+    [self applyZoomFlightPose:initialAt toView:animatedView maskView:maskView dimmingView:dimmingView];
+  }];
+
+  UIViewPropertyAnimator *animator = [[UIViewPropertyAnimator alloc] initWithDuration:duration
+                                                                                curve:UIViewAnimationCurveLinear
+                                                                           animations:nil];
+  __weak RNSScreenStackAnimator *weakSelf = self;
+  [animator addAnimations:^{
+    RNSZoomAddFlightKeyframes(nil, 0, ^(CGFloat t) {
+      [weakSelf applyZoomFlightPose:easedAt(t) toView:animatedView maskView:maskView dimmingView:dimmingView];
+    });
+  }];
+  [animator addCompletion:^(UIViewAnimatingPosition finalPosition) {
+    animatedView.maskView = nil;
+    animatedView.transform = CGAffineTransformIdentity;
+    [dimmingView removeFromSuperview];
+    [transitionContext completeTransition:![transitionContext transitionWasCancelled]];
+  }];
+  _inFlightAnimator = animator;
+  [animator startAnimation];
 }
 
 #pragma mark - Zoom card flight (snapshot stand-in)
@@ -978,7 +1008,11 @@ static void RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
     }
 
     standIn = [[UIImageView alloc] initWithImage:cardImage];
-    if (RNSZoomDebugEnabled || self->_animatedScreen.zoomShowDebugBorders) {
+    if (!RNSZoomDebugEnabled && !self->_animatedScreen.zoomShowDebugBorders) {
+      // Borders off: drop a card border a previous debug transition left behind
+      // (it lives on the Fabric-owned card and would otherwise persist until remount).
+      [[cardView viewWithTag:RNSZoomDebugCardBorderTag] removeFromSuperview];
+    } else {
       UIView *debugFlyingPaint = [[UIView alloc] initWithFrame:standIn.bounds];
       debugFlyingPaint.layer.borderColor = UIColor.redColor.CGColor;
       debugFlyingPaint.layer.borderWidth = 6;
@@ -1209,39 +1243,14 @@ static void RNSZoomCompleteTransition(
 
   // Fallback: masked screen zoom out of the source rect. Also the landing spot when
   // the card snapshot fails (nil stand-in) — mirrors the pop path.
-  // maskView (not the drag path's bare-CALayer technique) is safe here: the invariant
-  // at the _zoomMaskLayer declaration is about reading an RN-assigned layer.mask
-  // mid-drag; RN never assigns its own mask to the screen view, and this setter runs
-  // only at transition setup/teardown.
-  UIView *maskView = [[UIView alloc] init];
-  maskView.backgroundColor = [UIColor blackColor];
-  maskView.layer.cornerCurve = kCACornerCurveContinuous;
-
-  [UIView performWithoutAnimation:^{
-    animatedView.maskView = maskView;
-    [self applyZoomFlightPose:1 toView:animatedView maskView:maskView dimmingView:dimmingView];
-  }];
-
-  UIViewPropertyAnimator *animator = [[UIViewPropertyAnimator alloc] initWithDuration:duration
-                                                                                curve:UIViewAnimationCurveLinear
-                                                                           animations:nil];
-  __weak RNSScreenStackAnimator *weakSelf = self;
-  [animator addAnimations:^{
-    [weakSelf addZoomFlightKeyframesToView:animatedView
-                                  maskView:maskView
-                               dimmingView:dimmingView
-                                   easedAt:^CGFloat(CGFloat t) {
-                                     return 1 - RNSZoomEaseOutCubic(t);
-                                   }];
-  }];
-  [animator addCompletion:^(UIViewAnimatingPosition finalPosition) {
-    animatedView.maskView = nil;
-    animatedView.transform = CGAffineTransformIdentity;
-    [dimmingView removeFromSuperview];
-    [transitionContext completeTransition:![transitionContext transitionWasCancelled]];
-  }];
-  _inFlightAnimator = animator;
-  [animator startAnimation];
+  [self runMaskedZoomFlightWithContext:transitionContext
+                          animatedView:animatedView
+                           dimmingView:dimmingView
+                              duration:duration
+                             initialAt:1
+                               easedAt:^CGFloat(CGFloat t) {
+                                 return 1 - RNSZoomEaseOutCubic(t);
+                               }];
 }
 
 - (void)animateZoomPopWithContext:(id<UIViewControllerContextTransitioning>)transitionContext
@@ -1332,8 +1341,8 @@ static void RNSZoomCompleteTransition(
 
   if (standIn != nil) {
     // Card-flight close: the page fades out in place (COVER_ZOOM_CLOSE_FADE) while the
-    // snapshot stand-in materialises at the reader pose (CLOSE_REVEAL over the flight
-    // delay) and flies home with the overshoot arc. Landing restores the real card's
+    // snapshot stand-in materialises at the reader pose (fading in over the first
+    // revealFraction of the flight) and flies home with the overshoot arc. Landing restores the real card's
     // alpha in the same transaction that removes the stand-in — seamless.
     // Re-hold the card at 0 for the flight: Fabric may have remounted/recycled it since
     // push time (resetting its model alpha to the JS value), which would show the real
@@ -1370,36 +1379,15 @@ static void RNSZoomCompleteTransition(
 
   // Fallback: masked screen zoom back into the source rect, with the exact
   // CLOSE_FLIGHT_EASING (overshoot) + arc after the reveal delay. Also the landing
-  // spot when the card snapshot fails (nil stand-in) — mirrors the push path
-  // (including its maskView-setter exemption note).
-  UIView *maskView = [[UIView alloc] init];
-  maskView.backgroundColor = [UIColor blackColor];
-  maskView.layer.cornerCurve = kCACornerCurveContinuous;
-
-  [UIView performWithoutAnimation:^{
-    animatedView.maskView = maskView;
-    [self applyZoomFlightPose:0 toView:animatedView maskView:maskView dimmingView:dimmingView];
-  }];
-
-  UIViewPropertyAnimator *animator = [[UIViewPropertyAnimator alloc] initWithDuration:totalDuration
-                                                                                curve:UIViewAnimationCurveLinear
-                                                                           animations:nil];
-  [animator addAnimations:^{
-    [weakSelf addZoomFlightKeyframesToView:animatedView
-                                  maskView:maskView
-                               dimmingView:dimmingView
-                                   easedAt:^CGFloat(CGFloat t) {
-                                     return RNSZoomDelayedCloseEasing(t, delayFraction);
-                                   }];
-  }];
-  [animator addCompletion:^(UIViewAnimatingPosition finalPosition) {
-    animatedView.maskView = nil;
-    animatedView.transform = CGAffineTransformIdentity;
-    [dimmingView removeFromSuperview];
-    [transitionContext completeTransition:![transitionContext transitionWasCancelled]];
-  }];
-  _inFlightAnimator = animator;
-  [animator startAnimation];
+  // spot when the card snapshot fails (nil stand-in) — mirrors the push path.
+  [self runMaskedZoomFlightWithContext:transitionContext
+                          animatedView:animatedView
+                           dimmingView:dimmingView
+                              duration:totalDuration
+                             initialAt:0
+                               easedAt:^CGFloat(CGFloat t) {
+                                 return RNSZoomDelayedCloseEasing(t, delayFraction);
+                               }];
 }
 
 #pragma mark - Zoom interactive dismissal (driven from the stack's pan handler)
@@ -1409,13 +1397,17 @@ static void RNSZoomCompleteTransition(
   return _isZoomInteractive;
 }
 
+// Single source for the cancel spring's duration: zoomCancelDurationScale's contract
+// (the carrier completes together with the spring) depends on both readers agreeing.
+- (NSTimeInterval)zoomCancelSpringDuration
+{
+  return RNSZoomDuration(_animatedScreen.zoomCancelSpringMs, RNSZoomCancelSpringDuration);
+}
+
 - (CGFloat)zoomCancelDurationScale
 {
-  // Scale a cancelled carrier's completion to match the cancel spring
-  // (RNSZoomCancelSpringDuration, or the screen's zoomCancelSpringMs override).
-  const NSTimeInterval springDuration =
-      RNSZoomDuration(_animatedScreen.zoomCancelSpringMs, RNSZoomCancelSpringDuration);
-  return _transitionDuration > 0 ? springDuration / _transitionDuration : 1;
+  // Scale a cancelled carrier's completion to match the cancel spring.
+  return _transitionDuration > 0 ? [self zoomCancelSpringDuration] / _transitionDuration : 1;
 }
 
 // dismissTransform + dismissCornerRadius: finger-follow translation with the eased
@@ -1560,8 +1552,7 @@ static void RNSZoomCompleteTransition(
   if (animatedView == nil) {
     return;
   }
-  const NSTimeInterval springDuration =
-      RNSZoomDuration(_animatedScreen.zoomCancelSpringMs, RNSZoomCancelSpringDuration);
+  const NSTimeInterval springDuration = [self zoomCancelSpringDuration];
   [UIView animateWithDuration:springDuration
                         delay:0
        usingSpringWithDamping:RNSZoomCancelSpringDamping

@@ -1137,7 +1137,8 @@ RNS_IGNORE_SUPER_CALL_END
   static const float RNSZoomCommitDistance = 90.f;
   static const float RNSZoomEdgeCommitDistance = 95.f;
   static const float RNSZoomCommitVelocity = 700.f;
-  // JS dismissDrag: full drag progress spans 92% of the screen width.
+  // JS port: full drag progress spans 92% of the screen width (the deleted
+  // useReaderDismissGesture / useReaderCoverDismissGesture hooks).
   static const float RNSZoomProgressSpanFraction = 0.92f;
   // fractionComplete == 1 would complete the carrier animator mid-gesture; cap just under.
   static const float RNSZoomMaxScrubProgress = 0.99f;

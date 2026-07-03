@@ -1385,6 +1385,30 @@ RNS_IGNORE_SUPER_CALL_END
     [self setZoomSourceViewNativeID:RCTNSStringFromStringNilIfEmpty(newScreenProps.zoomSourceViewNativeID)];
   }
 
+  if (newScreenProps.zoomCloseFlightDelayMs != oldScreenProps.zoomCloseFlightDelayMs) {
+    [self setZoomCloseFlightDelayMs:newScreenProps.zoomCloseFlightDelayMs];
+  }
+
+  if (newScreenProps.zoomCloseRevealMs != oldScreenProps.zoomCloseRevealMs) {
+    [self setZoomCloseRevealMs:newScreenProps.zoomCloseRevealMs];
+  }
+
+  if (newScreenProps.zoomClosePageFadeMs != oldScreenProps.zoomClosePageFadeMs) {
+    [self setZoomClosePageFadeMs:newScreenProps.zoomClosePageFadeMs];
+  }
+
+  if (newScreenProps.zoomCommitRevealMs != oldScreenProps.zoomCommitRevealMs) {
+    [self setZoomCommitRevealMs:newScreenProps.zoomCommitRevealMs];
+  }
+
+  if (newScreenProps.zoomCancelSpringMs != oldScreenProps.zoomCancelSpringMs) {
+    [self setZoomCancelSpringMs:newScreenProps.zoomCancelSpringMs];
+  }
+
+  if (newScreenProps.zoomShowDebugBorders != oldScreenProps.zoomShowDebugBorders) {
+    [self setZoomShowDebugBorders:newScreenProps.zoomShowDebugBorders];
+  }
+
   [self setPreventNativeDismiss:newScreenProps.preventNativeDismiss];
 
   [self setActivityStateOrNil:[NSNumber numberWithFloat:newScreenProps.activityState]];
@@ -2180,6 +2204,12 @@ RCT_EXPORT_VIEW_PROPERTY(zoomAlignmentRect, NSDictionary)
 RCT_EXPORT_VIEW_PROPERTY(zoomSourceCornerRadius, CGFloat)
 RCT_EXPORT_VIEW_PROPERTY(zoomDismissEdgeOnly, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(zoomSourceViewNativeID, NSString)
+RCT_EXPORT_VIEW_PROPERTY(zoomCloseFlightDelayMs, CGFloat)
+RCT_EXPORT_VIEW_PROPERTY(zoomCloseRevealMs, CGFloat)
+RCT_EXPORT_VIEW_PROPERTY(zoomClosePageFadeMs, CGFloat)
+RCT_EXPORT_VIEW_PROPERTY(zoomCommitRevealMs, CGFloat)
+RCT_EXPORT_VIEW_PROPERTY(zoomCancelSpringMs, CGFloat)
+RCT_EXPORT_VIEW_PROPERTY(zoomShowDebugBorders, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(hideKeyboardOnSwipe, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(preventNativeDismiss, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(replaceAnimation, RNSScreenReplaceAnimation)

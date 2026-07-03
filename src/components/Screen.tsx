@@ -57,8 +57,9 @@ interface ViewConfig extends View {
   };
 }
 
-// Codegen rect props can't be optional; natively a non-positive width/height means
-// "unset". One helper for both zoom rects so the defaults can't drift apart.
+// Codegen struct props have no native 'absent' representation — undefined arrives as
+// zeroed fields. Normalize both rects to the same non-positive "unset" sentinel so
+// the defaults can't drift apart.
 const normalizeZoomRect = (rect?: ZoomTransitionRectType) => ({
   x: rect?.x ?? 0,
   y: rect?.y ?? 0,

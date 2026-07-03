@@ -223,8 +223,8 @@ export type NativeStackNavigationOptions = {
   zoomSourceViewNativeID?: ScreenProps['zoomSourceViewNativeID'];
   /**
    * Readwise: zoom timing overrides in ms (non-positive = built-in default). The
-   * open/close flight duration itself comes from `transitionDuration`. See types.tsx
-   * for each knob's meaning.
+   * open/close flight duration itself comes from `transitionDuration`. See
+   * `ScreenProps` in `src/types.tsx` for each knob's meaning.
    *
    * @platform ios
    */
