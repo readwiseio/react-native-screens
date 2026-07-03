@@ -40,7 +40,8 @@ export type StackAnimationTypes =
   | 'slide_from_right'
   | 'slide_from_left'
   | 'ios_from_right'
-  | 'ios_from_left';
+  | 'ios_from_left'
+  | 'zoom';
 export type BlurEffectTypes =
   | 'none'
   | 'extraLight'
@@ -96,6 +97,13 @@ export type GestureResponseDistanceType = {
   end?: number;
   top?: number;
   bottom?: number;
+};
+
+export type ZoomTransitionRectType = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 };
 
 export type SearchBarPlacement =
@@ -167,6 +175,98 @@ export interface ScreenProps extends ViewProps {
    * @platform ios
    */
   gestureResponseDistance?: GestureResponseDistanceType;
+  /**
+   * Readwise: source rect (in window coordinates) the screen zooms out of when
+   * `stackAnimation` is `zoom`.
+   *
+   * @platform ios
+   */
+  zoomSourceRect?: ZoomTransitionRectType;
+  /**
+   * Readwise: frame within the pushed screen that should land on `zoomSourceRect`
+   * (e.g. a cover image box). Used when `stackAnimation` is `zoom`.
+   *
+   * @platform ios
+   */
+  zoomAlignmentRect?: ZoomTransitionRectType;
+  /**
+   * Readwise: corner radius of the source view — used only by the masked screen-zoom
+   * FALLBACK (no source card found / snapshot failed); the card flight bakes the
+   * card's real corners into the stand-in.
+   *
+   * @platform ios
+   */
+  zoomSourceCornerRadius?: number;
+  /**
+   * Readwise: when true, the zoom dismiss pan only starts from the left-edge strip with a
+   * rightward pull; when false (default) it starts anywhere, in any direction.
+   * NOTE: the interactive zoom dismiss requires `fullScreenSwipeEnabled` and
+   * `customAnimationOnSwipe` on the same screen — without them the pan never receives
+   * touches / routes to the default slide animator.
+   *
+   * @platform ios
+   */
+  zoomDismissEdgeOnly?: boolean;
+  /**
+   * Readwise: nativeID of the source card view in the screen below. When found, the zoom
+   * transition flies a full-resolution snapshot stand-in of its cover (the real card is
+   * never reparented — Fabric owns it) and hands visibility off atomically at both ends.
+   *
+   * @platform ios
+   */
+  zoomSourceViewNativeID?: string;
+  /**
+   * Readwise: delay (ms) before the close flight starts moving, while the stand-in
+   * materialises in place. Non-positive keeps the built-in default (175ms). The
+   * open/close flight duration itself comes from `transitionDuration`.
+   *
+   * @platform ios
+   */
+  zoomCloseFlightDelayMs?: number;
+  /**
+   * Readwise: duration (ms) of the stand-in's fade-in at the start of the
+   * non-interactive close flight. Non-positive keeps the default (200ms).
+   *
+   * @platform ios
+   */
+  zoomCloseRevealMs?: number;
+  /**
+   * Readwise: duration (ms) of the page's fade-out during the close flights.
+   * Non-positive keeps the default (300ms).
+   *
+   * @platform ios
+   */
+  zoomClosePageFadeMs?: number;
+  /**
+   * Readwise: duration (ms) of the stand-in's fade-in when a dismiss drag commits.
+   * Non-positive keeps the default (150ms).
+   *
+   * @platform ios
+   */
+  zoomCommitRevealMs?: number;
+  /**
+   * Readwise: duration (ms) of the spring that returns the page when a dismiss drag
+   * is cancelled. Non-positive keeps the default (360ms).
+   *
+   * @platform ios
+   */
+  zoomCancelSpringMs?: number;
+  /**
+   * Readwise: back-easing coefficient for the close landing's squash-and-recover
+   * bounce (unitless — larger = deeper squash). Non-positive keeps the default (1.1).
+   *
+   * @platform ios
+   */
+  zoomCloseOvershoot?: number;
+  /**
+   * Readwise: paints the zoom debug borders (red = flying stand-in, blue = real card)
+   * for this screen's transitions — the runtime switch for the debug borders only;
+   * the native RNSZoomDebugEnabled compile switch additionally gates logging and
+   * slow motion. Defaults to false.
+   *
+   * @platform ios
+   */
+  zoomShowDebugBorders?: boolean;
   /**
    * Whether the home indicator should be hidden on this screen. Defaults to `false`.
    *
@@ -349,6 +449,31 @@ export interface ScreenProps extends ViewProps {
    */
   sheetElevation?: number;
   /**
+   * Readwise: maximum width of the sheet in points.
+   * When > 0 and the window is wider than this value, the sheet is constrained to this
+   * width and centered. The native side then also disables `prefersPageSizing` (iOS 17+)
+   * and overrides the sheet HEIGHT via `preferredContentSize` to
+   * `windowHeight * firstAllowedDetent` — with multiple detents the height follows the
+   * first one, not the selected detent. With the default detents (`[1.0]`) that is the
+   * full window height; the native 0.85 fallback only applies when the first detent is
+   * non-positive (e.g. `fitToContents`).
+   * On pageSheet, an active sheetMaxWidth/sheetBottomInset also applies the formSheet
+   * detent/grabber/corner handling to the sheet (and that part stays applied after
+   * the props reset to 0). Works only when `stackPresentation` is set to `formSheet`
+   * or `pageSheet`. Defaults to `0` (no constraint).
+   *
+   * @platform ios
+   */
+  sheetMaxWidth?: number;
+  /**
+   * Readwise: bottom inset for the sheet content (applied as additional safe area).
+   * Works only when `stackPresentation` is set to `formSheet` or `pageSheet`.
+   * Defaults to `0`.
+   *
+   * @platform ios
+   */
+  sheetBottomInset?: number;
+  /**
    * Whether the sheet should expand to larger detent when scrolling.
    * Works only when `stackPresentation` is set to `formSheet`.
    * Defaults to `true`.
@@ -429,6 +554,7 @@ export interface ScreenProps extends ViewProps {
    * - "slide_from_left" - slide in the new screen from left to right
    * - "ios_from_right" - iOS like slide in animation. pushes in the new screen from right to left (Android only, resolves to default transition on iOS)
    * - "ios_from_left" - iOS like slide in animation. pushes in the new screen from left to right (Android only, resolves to default transition on iOS)
+   * - "zoom" - Readwise: Apple Books-style zoom from `zoomSourceRect` onto `zoomAlignmentRect` (iOS only, resolves to default transition on Android)
    * - "none" – the screen appears/dissapears without an animation
    */
   stackAnimation?: StackAnimationTypes;

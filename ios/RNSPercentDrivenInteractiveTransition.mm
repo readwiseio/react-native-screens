@@ -58,9 +58,23 @@
 
   id<UITimingCurveProvider> timingParams = [_animationController timingParamsForAnimationCompletion];
 
+  CGFloat durationFactor = 1 - animator.fractionComplete;
+  if (_animationController.isZoomInteractive) {
+    // The zoom drag drives the screen pose manually; the carrier (an invisible dummy
+    // view) only holds the UIKit progress, and timingParamsForAnimationCompletion
+    // returns linear for it. With linear params, continueAnimation follows the docs:
+    // remaining run time = durationFactor x originalDuration, independent of
+    // fractionComplete (timing probes: factor 0.417 -> 185ms, 0.311 -> 147ms,
+    // 0.175 -> 88ms of a 420ms carrier). The commit flight and the cancel spring
+    // both run their FULL duration from release, so the carrier must match — the
+    // default (1 - fraction) factor completes the transition early and the teardown
+    // amputates the flight (snap landings, no bounce).
+    durationFactor = cancelled ? [_animationController zoomCancelDurationScale] : 1.0;
+  }
+
   [animator pauseAnimation];
   [animator setReversed:shouldReverseAnimation];
-  [animator continueAnimationWithTimingParameters:timingParams durationFactor:(1 - animator.fractionComplete)];
+  [animator continueAnimationWithTimingParameters:timingParams durationFactor:durationFactor];
 
   // System retains it & we don't need it anymore.
   _animationController = nil;

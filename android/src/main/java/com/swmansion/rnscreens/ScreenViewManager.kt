@@ -140,7 +140,8 @@ open class ScreenViewManager :
     ) {
         view.stackAnimation =
             when (animation) {
-                null, "default", "flip", "simple_push" -> Screen.StackAnimation.DEFAULT
+                // "zoom" is iOS-only (Apple Books style); folded into DEFAULT like the other iOS-only animations.
+                null, "default", "flip", "simple_push", "zoom" -> Screen.StackAnimation.DEFAULT
                 "none" -> Screen.StackAnimation.NONE
                 "fade" -> Screen.StackAnimation.FADE
                 "slide_from_right" -> Screen.StackAnimation.SLIDE_FROM_RIGHT
@@ -375,6 +376,77 @@ open class ScreenViewManager :
     ) {
         view.sheetInitialDetentIndex = value
     }
+
+    // these props are iOS-only, but we must override the interface stubs
+    override fun setSheetMaxWidth(
+        view: Screen?,
+        value: Float,
+    ) = Unit
+
+    override fun setSheetBottomInset(
+        view: Screen?,
+        value: Float,
+    ) = Unit
+
+    override fun setZoomSourceRect(
+        view: Screen?,
+        value: ReadableMap?,
+    ) = Unit
+
+    override fun setZoomAlignmentRect(
+        view: Screen?,
+        value: ReadableMap?,
+    ) = Unit
+
+    override fun setZoomSourceCornerRadius(
+        view: Screen?,
+        value: Float,
+    ) = Unit
+
+    override fun setZoomDismissEdgeOnly(
+        view: Screen?,
+        value: Boolean,
+    ) = Unit
+
+    override fun setZoomSourceViewNativeID(
+        view: Screen?,
+        value: String?,
+    ) = Unit
+
+    override fun setZoomCloseFlightDelayMs(
+        view: Screen?,
+        value: Float,
+    ) = Unit
+
+    override fun setZoomCloseRevealMs(
+        view: Screen?,
+        value: Float,
+    ) = Unit
+
+    override fun setZoomClosePageFadeMs(
+        view: Screen?,
+        value: Float,
+    ) = Unit
+
+    override fun setZoomCommitRevealMs(
+        view: Screen?,
+        value: Float,
+    ) = Unit
+
+    override fun setZoomCancelSpringMs(
+        view: Screen?,
+        value: Float,
+    ) = Unit
+
+    override fun setZoomCloseOvershoot(
+        view: Screen?,
+        value: Float,
+    ) = Unit
+
+    override fun setZoomShowDebugBorders(
+        view: Screen?,
+        value: Boolean,
+    ) = Unit
 
     override fun setScreenId(
         view: Screen,

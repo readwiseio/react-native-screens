@@ -187,6 +187,71 @@ export type NativeStackNavigationOptions = {
    */
   gestureResponseDistance?: ScreenProps['gestureResponseDistance'];
   /**
+   * Readwise: source rect (in window coordinates) the screen zooms out of when
+   * `stackAnimation` is `zoom`.
+   *
+   * @platform ios
+   */
+  zoomSourceRect?: ScreenProps['zoomSourceRect'];
+  /**
+   * Readwise: frame within the pushed screen that lands on `zoomSourceRect` when
+   * `stackAnimation` is `zoom`.
+   *
+   * @platform ios
+   */
+  zoomAlignmentRect?: ScreenProps['zoomAlignmentRect'];
+  /**
+   * Readwise: corner radius of the source view (masked screen-zoom fallback only —
+   * the card flight bakes the card's real corners into the stand-in).
+   *
+   * @platform ios
+   */
+  zoomSourceCornerRadius?: ScreenProps['zoomSourceCornerRadius'];
+  /**
+   * Readwise: when true, the zoom dismiss pan only starts from the left-edge strip.
+   * The interactive zoom dismiss requires `fullScreenSwipeEnabled` +
+   * `customAnimationOnSwipe` on the same screen.
+   *
+   * @platform ios
+   */
+  zoomDismissEdgeOnly?: ScreenProps['zoomDismissEdgeOnly'];
+  /**
+   * Readwise: nativeID of the source card view the zoom flight starts from (a snapshot
+   * stand-in of its cover flies — the real card is never reparented).
+   *
+   * @platform ios
+   */
+  zoomSourceViewNativeID?: ScreenProps['zoomSourceViewNativeID'];
+  /**
+   * Readwise: zoom timing overrides in ms (non-positive = built-in default). The
+   * open/close flight duration itself comes from `transitionDuration`. See
+   * `ScreenProps` in `src/types.tsx` for each knob's meaning.
+   *
+   * @platform ios
+   */
+  zoomCloseFlightDelayMs?: ScreenProps['zoomCloseFlightDelayMs'];
+  /** Readwise: see `zoomCloseFlightDelayMs`. @platform ios */
+  zoomCloseRevealMs?: ScreenProps['zoomCloseRevealMs'];
+  /** Readwise: see `zoomCloseFlightDelayMs`. @platform ios */
+  zoomClosePageFadeMs?: ScreenProps['zoomClosePageFadeMs'];
+  /** Readwise: see `zoomCloseFlightDelayMs`. @platform ios */
+  zoomCommitRevealMs?: ScreenProps['zoomCommitRevealMs'];
+  /** Readwise: see `zoomCloseFlightDelayMs`. @platform ios */
+  zoomCancelSpringMs?: ScreenProps['zoomCancelSpringMs'];
+  /**
+   * Readwise: back-easing coefficient for the close landing's squash-and-recover
+   * bounce (unitless). Non-positive keeps the default (1.1).
+   *
+   * @platform ios
+   */
+  zoomCloseOvershoot?: ScreenProps['zoomCloseOvershoot'];
+  /**
+   * Readwise: paints the zoom debug borders for this screen's transitions at runtime.
+   *
+   * @platform ios
+   */
+  zoomShowDebugBorders?: ScreenProps['zoomShowDebugBorders'];
+  /**
    * Title to display in the back button.
    * Only supported on iOS.
    *
@@ -456,6 +521,21 @@ export type NativeStackNavigationOptions = {
    */
   sheetLargestUndimmedDetentIndex?: ScreenProps['sheetLargestUndimmedDetentIndex'];
   /**
+   * Readwise: maximum sheet width; 0 keeps the platform default. When active it also
+   * overrides the sheet height to `windowHeight * firstAllowedDetent` (full window
+   * height with the default `[1.0]` detents) — see `sheetMaxWidth` in types.tsx for
+   * the full behavior.
+   *
+   * @platform ios
+   */
+  sheetMaxWidth?: ScreenProps['sheetMaxWidth'];
+  /**
+   * Readwise: extra bottom inset applied to the sheet (as additional safe area).
+   *
+   * @platform ios
+   */
+  sheetBottomInset?: ScreenProps['sheetBottomInset'];
+  /**
    * How the screen should appear/disappear when pushed or popped at the top of the stack.
    * The following values are currently supported:
    * - "default" – uses a platform default animation
@@ -468,6 +548,7 @@ export type NativeStackNavigationOptions = {
    * - "slide_from_left" - slide in the new screen from left to right
    * - "ios_from_right" - iOS like slide in animation. pushes in the new screen from right to left (Android only, resolves to default transition on iOS)
    * - "ios_from_left" - iOS like slide in animation. pushes in the new screen from left to right (Android only, resolves to default transition on iOS)
+   * - "zoom" - Readwise: Apple Books-style zoom from `zoomSourceRect` onto `zoomAlignmentRect` (iOS only, resolves to default transition on Android)
    * - "none" – the screen appears/dissapears without an animation
    */
   stackAnimation?: ScreenProps['stackAnimation'];

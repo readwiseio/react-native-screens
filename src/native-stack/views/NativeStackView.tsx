@@ -208,6 +208,20 @@ const RouteView = ({
     sheetElevation = 24,
     sheetExpandsWhenScrolledToEdge = true,
     sheetInitialDetentIndex = 0,
+    sheetMaxWidth = 0,
+    sheetBottomInset = 0,
+    zoomSourceRect,
+    zoomAlignmentRect,
+    zoomSourceCornerRadius = 0,
+    zoomDismissEdgeOnly = false,
+    zoomSourceViewNativeID,
+    zoomCloseFlightDelayMs = 0,
+    zoomCloseRevealMs = 0,
+    zoomClosePageFadeMs = 0,
+    zoomCommitRevealMs = 0,
+    zoomCancelSpringMs = 0,
+    zoomCloseOvershoot = 0,
+    zoomShowDebugBorders = false,
     nativeBackButtonDismissalEnabled = false,
     navigationBarColor,
     navigationBarTranslucent,
@@ -332,6 +346,8 @@ const RouteView = ({
       sheetCornerRadius={sheetCornerRadius}
       sheetElevation={sheetElevation}
       sheetExpandsWhenScrolledToEdge={sheetExpandsWhenScrolledToEdge}
+      sheetMaxWidth={sheetMaxWidth}
+      sheetBottomInset={sheetBottomInset}
       customAnimationOnSwipe={customAnimationOnSwipe}
       freezeOnBlur={freezeOnBlur}
       fullScreenSwipeEnabled={fullScreenSwipeEnabled}
@@ -340,6 +356,18 @@ const RouteView = ({
       homeIndicatorHidden={homeIndicatorHidden}
       gestureEnabled={isAndroid ? false : gestureEnabled}
       gestureResponseDistance={gestureResponseDistance}
+      zoomSourceRect={zoomSourceRect}
+      zoomAlignmentRect={zoomAlignmentRect}
+      zoomSourceCornerRadius={zoomSourceCornerRadius}
+      zoomDismissEdgeOnly={zoomDismissEdgeOnly}
+      zoomSourceViewNativeID={zoomSourceViewNativeID}
+      zoomCloseFlightDelayMs={zoomCloseFlightDelayMs}
+      zoomCloseRevealMs={zoomCloseRevealMs}
+      zoomClosePageFadeMs={zoomClosePageFadeMs}
+      zoomCommitRevealMs={zoomCommitRevealMs}
+      zoomCancelSpringMs={zoomCancelSpringMs}
+      zoomCloseOvershoot={zoomCloseOvershoot}
+      zoomShowDebugBorders={zoomShowDebugBorders}
       nativeBackButtonDismissalEnabled={nativeBackButtonDismissalEnabled}
       navigationBarColor={navigationBarColor}
       navigationBarTranslucent={navigationBarTranslucent}

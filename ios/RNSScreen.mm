@@ -31,6 +31,7 @@
 #import "RNSConversions.h"
 #import "RNSScreenFooter.h"
 #import "RNSScreenStack.h"
+#import "RNSScreenStackAnimator.h"
 #import "RNSScreenStackHeaderConfig.h"
 #import "RNSScrollViewHelper.h"
 #import "RNSTabBarController.h"
@@ -44,6 +45,9 @@ namespace react = facebook::react;
 
 constexpr NSInteger SHEET_FIT_TO_CONTENTS = -1;
 constexpr NSInteger SHEET_LARGEST_UNDIMMED_DETENT_NONE = -1;
+// Readwise: sheetMaxWidth height fallback when the first allowed detent is
+// non-positive (e.g. fitToContents). With JS's default detents ([1.0]) it never fires.
+constexpr CGFloat RNSSheetMaxWidthFallbackDetentFraction = 0.85;
 
 struct ContentWrapperBox {
   __weak RNSScreenContentWrapper *contentWrapper{nil};
@@ -71,6 +75,14 @@ struct ContentWrapperBox {
   CGFloat _sheetContentHeight;
   ContentWrapperBox _contentWrapperBox;
   bool _sheetHasInitialDetentSet;
+  // YES once the fork's pageSheet sizing props were applied, so the method re-enters
+  // to reset them when they return to 0 (the gate below would otherwise skip it).
+  bool _sheetDidCustomizePageSheet;
+  // Pre-force sheet sizing state, so the reset restores what the sheet actually had
+  // (prefersPageSizing's default is OS-dependent).
+  bool _sheetDidForceCustomSizing;
+  bool _sheetPageSizingBeforeForce;
+  bool _sheetEdgeAttachedBeforeForce;
 #ifdef RCT_NEW_ARCH_ENABLED
   RCTSurfaceTouchHandler *_touchHandler;
   react::RNSScreenShadowNode::ConcreteState::Shared _state;
@@ -337,6 +349,7 @@ RNS_IGNORE_SUPER_CALL_END
     case RNSScreenStackAnimationSlideFromBottom:
     case RNSScreenStackAnimationFadeFromBottom:
     case RNSScreenStackAnimationSlideFromLeft:
+    case RNSScreenStackAnimationZoom:
       // Default
       break;
   }
@@ -670,6 +683,34 @@ RNS_IGNORE_SUPER_CALL_END
 #undef RNS_EXPECTED_VIEW
 }
 
+- (void)willMoveToWindow:(UIWindow *)newWindow
+{
+  [super willMoveToWindow:newWindow];
+  // Readwise: library-owned invariant for the zoom animation. A completed zoom push
+  // leaves the source card session-hidden (model alpha 0), normally restored by the
+  // zoom pop's handoff. When this screen leaves the window by any OTHER route
+  // (non-animated pop, replace/state reset, a changed stackAnimation), restore the
+  // card here — Fabric can't repair it (the model value is what's wrong). The search
+  // root is the STACK's react subviews, not the window: UINavigationController
+  // detaches non-top screens, so the shelf may be off-window at detach time (replace,
+  // push-over-then-popTo). Benign extra fires (e.g. detach with the reader still
+  // open) are harmless — the next zoom flight re-hides the card in its own
+  // transaction.
+  if (newWindow == nil && _zoomSourceViewNativeID.length > 0) {
+    UIView *stackView = (UIView *)self.reactSuperview;
+    if ([stackView isKindOfClass:[RNSScreenStackView class]]) {
+      for (UIView *sibling in [(RNSScreenStackView *)stackView reactSubviews]) {
+        if (sibling != self) {
+          [RNSScreenStackAnimator restoreZoomSourceCardWithNativeID:_zoomSourceViewNativeID inView:sibling];
+        }
+      }
+    } else if (self.window != nil) {
+      // Non-stack parent: best effort from the outgoing window.
+      [RNSScreenStackAnimator restoreZoomSourceCardWithNativeID:_zoomSourceViewNativeID inView:self.window];
+    }
+  }
+}
+
 - (void)didMoveToWindow
 {
   // For RN touches to work we need to instantiate and connect RCTTouchHandler. This only applies
@@ -962,11 +1003,24 @@ RNS_IGNORE_SUPER_CALL_END
  * Note that this method should not be called inside `stackPresentation` setter, because on Paper we don't have
  * guarantee that values of all related props had been updated earlier. It should be invoked from `didSetProps`.
  * On Fabric we run it from `finalizeUpdates` if props have changed.
+ * Readwise: also entered for pageSheet screens while the fork sizing props are (or were) set.
  */
 - (void)updateFormSheetPresentationStyle
 {
-  if (_stackPresentation != RNSScreenStackPresentationFormSheet) {
+  // pageSheet screens enter this method ONLY when the fork-added sizing props are (or
+  // were) set — widening unconditionally would hand grabber/corner-radius/detent
+  // handling to every pre-existing pageSheet screen. The `did customize` flag lets one
+  // more pass through after the props return to 0, so the reset branches below can
+  // restore the defaults. The other formSheet-only gates in this file (content-height /
+  // keyboard handling) are deliberately left untouched.
+  const BOOL isFormSheet = _stackPresentation == RNSScreenStackPresentationFormSheet;
+  const BOOL isPageSheet = _stackPresentation == RNSScreenStackPresentationPageSheet;
+  const BOOL pageSheetCustomized = _sheetMaxWidth > 0 || _sheetBottomInset > 0;
+  if (!isFormSheet && !(isPageSheet && (pageSheetCustomized || _sheetDidCustomizePageSheet))) {
     return;
+  }
+  if (isPageSheet) {
+    _sheetDidCustomizePageSheet = pageSheetCustomized;
   }
 
   int firstDimmedDetentIndex = _sheetAllowedDetents.count;
@@ -1066,6 +1120,80 @@ RNS_IGNORE_SUPER_CALL_END
     sheet.prefersScrollingExpandsWhenScrolledToEdge = _sheetExpandsWhenScrolledToEdge;
     [self setGrabberVisibleForSheet:sheet to:_sheetGrabberVisible animate:YES];
     [self setCornerRadiusForSheet:sheet to:_sheetCornerRadius animate:YES];
+
+    // Custom sheet sizing via preferredContentSize.
+    // Only constrain width when the window is wider than sheetMaxWidth. Sized from the
+    // window (not UIScreen.mainScreen — wrong under Split View / Stage Manager), with a
+    // mainScreen fallback for prop updates that land before the view is in a window.
+    // Guard each setter so redundant assignments don't trigger re-layout, and reset
+    // the SIZING state (page sizing, edge-attach, preferredContentSize, insets) when
+    // the props return to 0 — the general formSheet machinery applied above to a
+    // customized pageSheet (delegate, detents, grabber, corner radius) is not unwound.
+    // NOTE: this method runs on prop commits only — a rotation with an active
+    // sheetMaxWidth keeps the height computed from the pre-rotation window until the
+    // next commit re-enters here.
+    const CGRect windowBounds = self.window != nil ? self.window.bounds : UIScreen.mainScreen.bounds;
+    if (_sheetMaxWidth > 0 && windowBounds.size.width > _sheetMaxWidth) {
+      // Capture the pre-force values once so the reset branch restores what the sheet
+      // actually had — prefersPageSizing's default differs by OS (NO on iOS 18+, YES
+      // before), so asserting an assumed default would change stock sheets.
+      if (!_sheetDidForceCustomSizing) {
+        _sheetDidForceCustomSizing = true;
+        if (@available(iOS 17.0, *)) {
+          _sheetPageSizingBeforeForce = sheet.prefersPageSizing;
+        }
+        _sheetEdgeAttachedBeforeForce = sheet.prefersEdgeAttachedInCompactHeight;
+      }
+      if (@available(iOS 17.0, *)) {
+        if (sheet.prefersPageSizing != NO) {
+          sheet.prefersPageSizing = NO;
+        }
+      }
+
+      // Height follows the first allowed detent. The fallback only applies when the
+      // first detent is non-positive (e.g. fitToContents, sent as [-1]) — JS defaults
+      // detents to [1.0], so "no detents set" resolves to full window height.
+      CGFloat detentFraction = RNSSheetMaxWidthFallbackDetentFraction;
+      if (_sheetAllowedDetents.count > 0 && _sheetAllowedDetents[0].floatValue > 0) {
+        detentFraction = _sheetAllowedDetents[0].floatValue;
+      }
+      CGSize newSize = CGSizeMake(_sheetMaxWidth, windowBounds.size.height * detentFraction);
+      if (!CGSizeEqualToSize(_controller.preferredContentSize, newSize)) {
+        _controller.preferredContentSize = newSize;
+      }
+
+      if (sheet.widthFollowsPreferredContentSizeWhenEdgeAttached != YES) {
+        sheet.widthFollowsPreferredContentSizeWhenEdgeAttached = YES;
+      }
+      if (sheet.prefersEdgeAttachedInCompactHeight != YES) {
+        sheet.prefersEdgeAttachedInCompactHeight = YES;
+      }
+    } else {
+      // Restore only what the active branch forced; never touch a stock sheet.
+      if (_sheetDidForceCustomSizing) {
+        _sheetDidForceCustomSizing = false;
+        if (@available(iOS 17.0, *)) {
+          if (sheet.prefersPageSizing != _sheetPageSizingBeforeForce) {
+            sheet.prefersPageSizing = _sheetPageSizingBeforeForce;
+          }
+        }
+        if (sheet.prefersEdgeAttachedInCompactHeight != _sheetEdgeAttachedBeforeForce) {
+          sheet.prefersEdgeAttachedInCompactHeight = _sheetEdgeAttachedBeforeForce;
+        }
+        if (sheet.widthFollowsPreferredContentSizeWhenEdgeAttached != NO) {
+          sheet.widthFollowsPreferredContentSizeWhenEdgeAttached = NO;
+        }
+      }
+      if (!CGSizeEqualToSize(_controller.preferredContentSize, CGSizeZero)) {
+        _controller.preferredContentSize = CGSizeZero;
+      }
+    }
+
+    UIEdgeInsets newInsets =
+        _sheetBottomInset > 0 ? UIEdgeInsetsMake(0, 0, _sheetBottomInset, 0) : UIEdgeInsetsZero;
+    if (!UIEdgeInsetsEqualToEdgeInsets(_controller.additionalSafeAreaInsets, newInsets)) {
+      _controller.additionalSafeAreaInsets = newInsets;
+    }
 
     // lud - largest undimmed detent
     // First we try to take value from the prop or default.
@@ -1264,6 +1392,56 @@ RNS_IGNORE_SUPER_CALL_END
       setGestureResponseDistance:[RNSConvert
                                      gestureResponseDistanceDictFromCppStruct:newScreenProps.gestureResponseDistance]];
 
+  [self setZoomSourceRect:[RNSConvert zoomRectDictFromX:newScreenProps.zoomSourceRect.x
+                                                       y:newScreenProps.zoomSourceRect.y
+                                                   width:newScreenProps.zoomSourceRect.width
+                                                  height:newScreenProps.zoomSourceRect.height]];
+
+  [self setZoomAlignmentRect:[RNSConvert zoomRectDictFromX:newScreenProps.zoomAlignmentRect.x
+                                                          y:newScreenProps.zoomAlignmentRect.y
+                                                      width:newScreenProps.zoomAlignmentRect.width
+                                                     height:newScreenProps.zoomAlignmentRect.height]];
+
+  if (newScreenProps.zoomSourceCornerRadius != oldScreenProps.zoomSourceCornerRadius) {
+    [self setZoomSourceCornerRadius:newScreenProps.zoomSourceCornerRadius];
+  }
+
+  if (newScreenProps.zoomDismissEdgeOnly != oldScreenProps.zoomDismissEdgeOnly) {
+    [self setZoomDismissEdgeOnly:newScreenProps.zoomDismissEdgeOnly];
+  }
+
+  if (newScreenProps.zoomSourceViewNativeID != oldScreenProps.zoomSourceViewNativeID) {
+    [self setZoomSourceViewNativeID:RCTNSStringFromStringNilIfEmpty(newScreenProps.zoomSourceViewNativeID)];
+  }
+
+  if (newScreenProps.zoomCloseFlightDelayMs != oldScreenProps.zoomCloseFlightDelayMs) {
+    [self setZoomCloseFlightDelayMs:newScreenProps.zoomCloseFlightDelayMs];
+  }
+
+  if (newScreenProps.zoomCloseRevealMs != oldScreenProps.zoomCloseRevealMs) {
+    [self setZoomCloseRevealMs:newScreenProps.zoomCloseRevealMs];
+  }
+
+  if (newScreenProps.zoomClosePageFadeMs != oldScreenProps.zoomClosePageFadeMs) {
+    [self setZoomClosePageFadeMs:newScreenProps.zoomClosePageFadeMs];
+  }
+
+  if (newScreenProps.zoomCommitRevealMs != oldScreenProps.zoomCommitRevealMs) {
+    [self setZoomCommitRevealMs:newScreenProps.zoomCommitRevealMs];
+  }
+
+  if (newScreenProps.zoomCancelSpringMs != oldScreenProps.zoomCancelSpringMs) {
+    [self setZoomCancelSpringMs:newScreenProps.zoomCancelSpringMs];
+  }
+
+  if (newScreenProps.zoomCloseOvershoot != oldScreenProps.zoomCloseOvershoot) {
+    [self setZoomCloseOvershoot:newScreenProps.zoomCloseOvershoot];
+  }
+
+  if (newScreenProps.zoomShowDebugBorders != oldScreenProps.zoomShowDebugBorders) {
+    [self setZoomShowDebugBorders:newScreenProps.zoomShowDebugBorders];
+  }
+
   [self setPreventNativeDismiss:newScreenProps.preventNativeDismiss];
 
   [self setActivityStateOrNil:[NSNumber numberWithFloat:newScreenProps.activityState]];
@@ -1308,6 +1486,14 @@ RNS_IGNORE_SUPER_CALL_END
 
   if (newScreenProps.sheetLargestUndimmedDetent != oldScreenProps.sheetLargestUndimmedDetent) {
     [self setSheetLargestUndimmedDetent:[NSNumber numberWithInt:newScreenProps.sheetLargestUndimmedDetent]];
+  }
+
+  if (newScreenProps.sheetMaxWidth != oldScreenProps.sheetMaxWidth) {
+    [self setSheetMaxWidth:newScreenProps.sheetMaxWidth];
+  }
+
+  if (newScreenProps.sheetBottomInset != oldScreenProps.sheetBottomInset) {
+    [self setSheetBottomInset:newScreenProps.sheetBottomInset];
   }
 #endif // !TARGET_OS_TV
 
@@ -1382,7 +1568,8 @@ RNS_IGNORE_SUPER_CALL_END
 {
   [super didSetProps:changedProps];
 #if !TARGET_OS_TV && !TARGET_OS_VISION
-  if (self.stackPresentation == RNSScreenStackPresentationFormSheet) {
+  if (self.stackPresentation == RNSScreenStackPresentationFormSheet ||
+      self.stackPresentation == RNSScreenStackPresentationPageSheet) {
     [self updateFormSheetPresentationStyle];
   }
 #endif // !TARGET_OS_TV
@@ -2045,6 +2232,18 @@ RCT_EXPORT_VIEW_PROPERTY(fullScreenSwipeEnabled, BOOL);
 RCT_EXPORT_VIEW_PROPERTY(fullScreenSwipeShadowEnabled, BOOL);
 RCT_EXPORT_VIEW_PROPERTY(gestureEnabled, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(gestureResponseDistance, NSDictionary)
+RCT_EXPORT_VIEW_PROPERTY(zoomSourceRect, NSDictionary)
+RCT_EXPORT_VIEW_PROPERTY(zoomAlignmentRect, NSDictionary)
+RCT_EXPORT_VIEW_PROPERTY(zoomSourceCornerRadius, CGFloat)
+RCT_EXPORT_VIEW_PROPERTY(zoomDismissEdgeOnly, BOOL)
+RCT_EXPORT_VIEW_PROPERTY(zoomSourceViewNativeID, NSString)
+RCT_EXPORT_VIEW_PROPERTY(zoomCloseFlightDelayMs, CGFloat)
+RCT_EXPORT_VIEW_PROPERTY(zoomCloseRevealMs, CGFloat)
+RCT_EXPORT_VIEW_PROPERTY(zoomClosePageFadeMs, CGFloat)
+RCT_EXPORT_VIEW_PROPERTY(zoomCommitRevealMs, CGFloat)
+RCT_EXPORT_VIEW_PROPERTY(zoomCancelSpringMs, CGFloat)
+RCT_EXPORT_VIEW_PROPERTY(zoomCloseOvershoot, CGFloat)
+RCT_EXPORT_VIEW_PROPERTY(zoomShowDebugBorders, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(hideKeyboardOnSwipe, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(preventNativeDismiss, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(replaceAnimation, RNSScreenReplaceAnimation)
@@ -2078,6 +2277,8 @@ RCT_EXPORT_VIEW_PROPERTY(sheetGrabberVisible, BOOL);
 RCT_EXPORT_VIEW_PROPERTY(sheetCornerRadius, CGFloat);
 RCT_EXPORT_VIEW_PROPERTY(sheetInitialDetent, NSInteger);
 RCT_EXPORT_VIEW_PROPERTY(sheetExpandsWhenScrolledToEdge, BOOL);
+RCT_EXPORT_VIEW_PROPERTY(sheetMaxWidth, CGFloat);
+RCT_EXPORT_VIEW_PROPERTY(sheetBottomInset, CGFloat);
 #endif
 
 #if !TARGET_OS_TV && !TARGET_OS_VISION
@@ -2152,6 +2353,7 @@ RCT_ENUM_CONVERTER(
       @"slide_from_left" : @(RNSScreenStackAnimationSlideFromLeft),
       @"ios_from_right" : @(RNSScreenStackAnimationDefault),
       @"ios_from_left" : @(RNSScreenStackAnimationSlideFromLeft),
+      @"zoom" : @(RNSScreenStackAnimationZoom),
     }),
     RNSScreenStackAnimationDefault,
     integerValue)

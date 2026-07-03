@@ -5,7 +5,7 @@ import { Animated, View, Platform } from 'react-native';
 
 import TransitionProgressContext from '../TransitionProgressContext';
 import DelayedFreeze from './helpers/DelayedFreeze';
-import { ScreenProps } from '../types';
+import { ScreenProps, ZoomTransitionRectType } from '../types';
 
 import {
   freezeEnabled,
@@ -57,6 +57,16 @@ interface ViewConfig extends View {
   };
 }
 
+// Codegen struct props have no native 'absent' representation — undefined arrives as
+// zeroed fields. Normalize both rects to the same non-positive "unset" sentinel so
+// the defaults can't drift apart.
+const normalizeZoomRect = (rect?: ZoomTransitionRectType) => ({
+  x: rect?.x ?? 0,
+  y: rect?.y ?? 0,
+  width: rect?.width ?? 0,
+  height: rect?.height ?? 0,
+});
+
 export const InnerScreen = React.forwardRef<View, ScreenProps>(
   function InnerScreen(props, ref) {
     const innerRef = React.useRef<ViewConfig | null>(null);
@@ -90,6 +100,21 @@ export const InnerScreen = React.forwardRef<View, ScreenProps>(
       sheetExpandsWhenScrolledToEdge = true,
       sheetElevation = 24,
       sheetInitialDetentIndex = 0,
+      sheetMaxWidth = 0,
+      sheetBottomInset = 0,
+      // Zoom transition props
+      zoomSourceRect,
+      zoomAlignmentRect,
+      zoomSourceCornerRadius = 0,
+      zoomDismissEdgeOnly = false,
+      zoomSourceViewNativeID,
+      zoomCloseFlightDelayMs = 0,
+      zoomCloseRevealMs = 0,
+      zoomClosePageFadeMs = 0,
+      zoomCommitRevealMs = 0,
+      zoomCancelSpringMs = 0,
+      zoomCloseOvershoot = 0,
+      zoomShowDebugBorders = false,
       // Other
       screenId,
       stackPresentation,
@@ -219,12 +244,26 @@ export const InnerScreen = React.forwardRef<View, ScreenProps>(
             sheetCornerRadius={sheetCornerRadius}
             sheetExpandsWhenScrolledToEdge={sheetExpandsWhenScrolledToEdge}
             sheetInitialDetent={resolvedSheetInitialDetentIndex}
+            sheetMaxWidth={sheetMaxWidth}
+            sheetBottomInset={sheetBottomInset}
             gestureResponseDistance={{
               start: gestureResponseDistance?.start ?? -1,
               end: gestureResponseDistance?.end ?? -1,
               top: gestureResponseDistance?.top ?? -1,
               bottom: gestureResponseDistance?.bottom ?? -1,
             }}
+            zoomSourceRect={normalizeZoomRect(zoomSourceRect)}
+            zoomAlignmentRect={normalizeZoomRect(zoomAlignmentRect)}
+            zoomSourceCornerRadius={zoomSourceCornerRadius}
+            zoomDismissEdgeOnly={zoomDismissEdgeOnly}
+            zoomSourceViewNativeID={zoomSourceViewNativeID}
+            zoomCloseFlightDelayMs={zoomCloseFlightDelayMs}
+            zoomCloseRevealMs={zoomCloseRevealMs}
+            zoomClosePageFadeMs={zoomClosePageFadeMs}
+            zoomCommitRevealMs={zoomCommitRevealMs}
+            zoomCancelSpringMs={zoomCancelSpringMs}
+            zoomCloseOvershoot={zoomCloseOvershoot}
+            zoomShowDebugBorders={zoomShowDebugBorders}
             // This prevents showing blank screen when navigating between multiple screens with freezing
             // https://github.com/software-mansion/react-native-screens/pull/1208
             ref={handleRef}

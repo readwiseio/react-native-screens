@@ -1,2 +1,12 @@
 # specific for windows script files
 *.bat text eol=crlf
+
+# Readwise: lib/ is committed build output (git-dependency installs skip prepare);
+# collapse it in PR diffs.
+lib/** linguist-generated=true
+
+# Readwise (no attribute — documentation only, since package.json can't hold
+# comments): package.json's prepare is `bob build` (husky removed). npm runs prepare
+# on git-dependency installs, where husky is absent (devDependency) and would fail;
+# pnpm (rekindled's manager) skips it entirely, hence the committed lib/. Fork
+# contributors wanting hooks run `husky install` manually.

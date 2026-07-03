@@ -87,6 +87,33 @@ namespace react = facebook::react;
 @property (nonatomic) BOOL preventNativeDismiss;
 @property (nonatomic, retain) RNSScreen *controller;
 @property (nonatomic, copy) NSDictionary *gestureResponseDistance;
+// Props for the zoom (Apple Books style) stack animation. Rects are dictionaries
+// with x/y/width/height keys; source rect is in window coordinates, alignment rect
+// is the cover's frame within the pushed screen. Non-positive width/height means "unset".
+@property (nonatomic, copy, nullable) NSDictionary *zoomSourceRect;
+@property (nonatomic, copy, nullable) NSDictionary *zoomAlignmentRect;
+@property (nonatomic) CGFloat zoomSourceCornerRadius;
+// When set, the zoom dismiss pan only starts from the left-edge strip with a clear
+// rightward pull (the "book is readable" regime); otherwise any direction anywhere.
+@property (nonatomic) BOOL zoomDismissEdgeOnly;
+// nativeID of the source card view (in the screen below). When found, the zoom flies
+// a full-resolution snapshot stand-in of its cover (the real card is never reparented —
+// Fabric owns it) and hands visibility off atomically at both ends, so the landing
+// is seamless by construction.
+@property (nonatomic, copy, nullable) NSString *zoomSourceViewNativeID;
+// Zoom timing overrides in milliseconds; non-positive means "use the built-in
+// default". The open/close flight duration itself comes from `transitionDuration`.
+@property (nonatomic) CGFloat zoomCloseFlightDelayMs;
+@property (nonatomic) CGFloat zoomCloseRevealMs;
+@property (nonatomic) CGFloat zoomClosePageFadeMs;
+@property (nonatomic) CGFloat zoomCommitRevealMs;
+@property (nonatomic) CGFloat zoomCancelSpringMs;
+// Back-easing coefficient for the close landing's squash-and-recover bounce
+// (unitless, not ms); non-positive keeps the built-in default (1.1).
+@property (nonatomic) CGFloat zoomCloseOvershoot;
+// Paints the zoom debug borders (red = flying stand-in, blue = real card) for this
+// screen's transitions at runtime — no rebuild needed, unlike RNSZoomDebugEnabled.
+@property (nonatomic) BOOL zoomShowDebugBorders;
 @property (nonatomic) int activityState;
 @property (nonatomic, nullable) NSString *screenId;
 @property (weak, nonatomic) UIView<RNSScreenContainerDelegate> *reactSuperview;
@@ -105,6 +132,8 @@ namespace react = facebook::react;
 @property (nonatomic) CGFloat sheetCornerRadius;
 @property (nonatomic) NSInteger sheetInitialDetent;
 @property (nonatomic) BOOL sheetExpandsWhenScrolledToEdge;
+@property (nonatomic) CGFloat sheetMaxWidth;
+@property (nonatomic) CGFloat sheetBottomInset;
 #endif // !TARGET_OS_TV
 
 #ifdef RCT_NEW_ARCH_ENABLED

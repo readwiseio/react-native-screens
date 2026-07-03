@@ -40,6 +40,13 @@ type GestureResponseDistanceType = Readonly<{
   bottom: Float;
 }>;
 
+type ZoomTransitionRectType = Readonly<{
+  x: Float;
+  y: Float;
+  width: Float;
+  height: Float;
+}>;
+
 type StackPresentation =
   | 'push'
   | 'modal'
@@ -61,7 +68,8 @@ type StackAnimation =
   | 'slide_from_bottom'
   | 'fade_from_bottom'
   | 'ios_from_right'
-  | 'ios_from_left';
+  | 'ios_from_left'
+  | 'zoom';
 
 type SwipeDirection = 'vertical' | 'horizontal';
 
@@ -87,6 +95,8 @@ export interface NativeProps extends ViewProps {
   sheetExpandsWhenScrolledToEdge?: WithDefault<boolean, false>;
   sheetInitialDetent?: WithDefault<Int32, 0>;
   sheetElevation?: WithDefault<Int32, 24>;
+  sheetMaxWidth?: WithDefault<Float, 0.0>;
+  sheetBottomInset?: WithDefault<Float, 0.0>;
   customAnimationOnSwipe?: boolean;
   fullScreenSwipeEnabled?: boolean;
   fullScreenSwipeShadowEnabled?: WithDefault<boolean, true>;
@@ -100,6 +110,18 @@ export interface NativeProps extends ViewProps {
   statusBarStyle?: string;
   statusBarTranslucent?: boolean;
   gestureResponseDistance?: GestureResponseDistanceType;
+  zoomSourceRect?: ZoomTransitionRectType;
+  zoomAlignmentRect?: ZoomTransitionRectType;
+  zoomSourceCornerRadius?: WithDefault<Float, 0.0>;
+  zoomDismissEdgeOnly?: WithDefault<boolean, false>;
+  zoomSourceViewNativeID?: string;
+  zoomCloseFlightDelayMs?: WithDefault<Float, 0.0>;
+  zoomCloseRevealMs?: WithDefault<Float, 0.0>;
+  zoomClosePageFadeMs?: WithDefault<Float, 0.0>;
+  zoomCommitRevealMs?: WithDefault<Float, 0.0>;
+  zoomCancelSpringMs?: WithDefault<Float, 0.0>;
+  zoomCloseOvershoot?: WithDefault<Float, 0.0>;
+  zoomShowDebugBorders?: WithDefault<boolean, false>;
   stackPresentation?: WithDefault<StackPresentation, 'push'>;
   stackAnimation?: WithDefault<StackAnimation, 'default'>;
   transitionDuration?: WithDefault<Int32, 500>;
