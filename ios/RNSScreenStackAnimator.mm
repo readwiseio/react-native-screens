@@ -962,15 +962,17 @@ static void RNSZoomAddFlightKeyframes(UIView *_Nullable revealView, CGFloat reve
   return RNSZoomArcLerpTransform(RNSZoomIdentityPose, RNSZoomSlotPoseForGeometry(_zoomCardGeometry), at);
 }
 
-// Renders a view into the current image-renderer context at destRect. Prefers the
-// on-screen appearance; drawViewHierarchyInRect can silently produce a blank image
-// (observed on repeat opens: BOOL result NO), so fall back to a model-tree layer
-// render, which has no dependency on render-server snapshot state.
+// Renders a view into the current image-renderer context at destRect via a model-tree
+// layer render. drawViewHierarchyInRect is NOT usable here, with either flag: the
+// builder's badge/card alpha juggling is uncommitted at draw time, so
+// afterScreenUpdates:NO snapshots stale render-server content (badges fly with the
+// card), and YES forces a synchronous on-screen commit mid transition setup, which
+// displays the half-built frame (raw-reader flash — or a blanked window when the
+// reader is hidden). renderInContext reads the model tree, so it sees the juggled
+// alphas without any commit, and has no render-server snapshot-state dependency
+// (drawViewHierarchyInRect also silently returned blanks on repeat opens).
 static void RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsImageRendererContext *context)
 {
-  if ([view drawViewHierarchyInRect:destRect afterScreenUpdates:YES]) {
-    return;
-  }
   CGContextRef ctx = context.CGContext;
   CGContextSaveGState(ctx);
   CGContextTranslateCTM(ctx, destRect.origin.x, destRect.origin.y);
