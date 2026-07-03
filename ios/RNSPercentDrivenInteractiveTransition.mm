@@ -62,8 +62,9 @@
   if (cancelled && _animationController.isZoomInteractive) {
     // The zoom drag drives the screen pose manually; the carrier (an invisible dummy
     // view) only holds the UIKit progress, and timingParamsForAnimationCompletion
-    // returns linear for it. VERIFIED with a timing probe (PR #1 round 4, deep-drag
-    // commit at fraction 0.888): despite how the continueAnimation docs read, the
+    // returns linear for it. VERIFIED with a timing probe (readwise fork PR #1,
+    // review round 4 — deep-drag commit at fraction 0.888): despite how the
+    // continueAnimation docs read, the
     // observed remaining run time here is durationFactor x originalDuration
     // / (1 - fractionComplete) — so the default (1 - fraction) factor above yields a
     // CONSTANT remaining time of one full duration, matching the commit flight

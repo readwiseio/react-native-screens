@@ -689,13 +689,25 @@ RNS_IGNORE_SUPER_CALL_END
   // Readwise: library-owned invariant for the zoom animation. A completed zoom push
   // leaves the source card session-hidden (model alpha 0), normally restored by the
   // zoom pop's handoff. When this screen leaves the window by any OTHER route
-  // (non-animated pop, replace/state reset, multi-level pop past the shelf, a changed
-  // stackAnimation), restore the card here — Fabric can't repair it (the model value
-  // is what's wrong). Searching from the outgoing window covers cards anywhere in the
-  // stack; benign extra fires (e.g. detach with the reader still open) are harmless —
-  // the next zoom flight re-hides the card in its own transaction.
-  if (newWindow == nil && _zoomSourceViewNativeID.length > 0 && self.window != nil) {
-    [RNSScreenStackAnimator restoreZoomSourceCardWithNativeID:_zoomSourceViewNativeID inView:self.window];
+  // (non-animated pop, replace/state reset, a changed stackAnimation), restore the
+  // card here — Fabric can't repair it (the model value is what's wrong). The search
+  // root is the STACK's react subviews, not the window: UINavigationController
+  // detaches non-top screens, so the shelf may be off-window at detach time (replace,
+  // push-over-then-popTo). Benign extra fires (e.g. detach with the reader still
+  // open) are harmless — the next zoom flight re-hides the card in its own
+  // transaction.
+  if (newWindow == nil && _zoomSourceViewNativeID.length > 0) {
+    UIView *stackView = (UIView *)self.reactSuperview;
+    if ([stackView isKindOfClass:[RNSScreenStackView class]]) {
+      for (UIView *sibling in [(RNSScreenStackView *)stackView reactSubviews]) {
+        if (sibling != self) {
+          [RNSScreenStackAnimator restoreZoomSourceCardWithNativeID:_zoomSourceViewNativeID inView:sibling];
+        }
+      }
+    } else if (self.window != nil) {
+      // Non-stack parent: best effort from the outgoing window.
+      [RNSScreenStackAnimator restoreZoomSourceCardWithNativeID:_zoomSourceViewNativeID inView:self.window];
+    }
   }
 }
 

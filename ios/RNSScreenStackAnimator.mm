@@ -97,6 +97,12 @@ static inline CGFloat RNSZoomClamp01(CGFloat t)
   return MAX((CGFloat)0, MIN((CGFloat)1, t));
 }
 
+// Dim policy in "at" space (1 = shelf pose -> no dim), shared by every flight.
+static inline CGFloat RNSZoomDimAlphaAt(CGFloat at)
+{
+  return RNSZoomDimMaxAlpha * (1 - RNSZoomClamp01(at));
+}
+
 // dismissShrinkScale
 static inline CGFloat RNSZoomDragScale(CGFloat dragProgress)
 {
@@ -226,23 +232,35 @@ static BOOL RNSZoomViewMatchesNativeID(UIView *view, NSString *nativeID)
   return [view.accessibilityIdentifier isEqualToString:nativeID];
 }
 
+// Depth caps for the nativeID searches: screen-relative lookups (flight setup — a
+// miss degrades gracefully to the masked zoom) vs the restore path, which searches
+// from a higher root (stack/window) and where a miss would leave the card invisible
+// with no recovery — so it gets generous headroom.
+static const int RNSZoomFindDepthCap = 30;
+static const int RNSZoomRestoreDepthCap = 60;
+
 // Finds the first view matching the nativeID. Depth-capped; only WKWebView subtrees
 // are skipped — everything else (including scroll views) is traversed.
-static UIView *_Nullable RNSZoomFindViewByNativeID(UIView *root, NSString *nativeID, int depth)
+static UIView *_Nullable RNSZoomFindViewByNativeIDCapped(UIView *root, NSString *nativeID, int depth, int cap)
 {
-  if (depth > 30 || [root isKindOfClass:NSClassFromString(@"WKWebView")]) {
+  if (depth > cap || [root isKindOfClass:NSClassFromString(@"WKWebView")]) {
     return nil;
   }
   if (RNSZoomViewMatchesNativeID(root, nativeID)) {
     return root;
   }
   for (UIView *subview in root.subviews) {
-    UIView *found = RNSZoomFindViewByNativeID(subview, nativeID, depth + 1);
+    UIView *found = RNSZoomFindViewByNativeIDCapped(subview, nativeID, depth + 1, cap);
     if (found != nil) {
       return found;
     }
   }
   return nil;
+}
+
+static UIView *_Nullable RNSZoomFindViewByNativeID(UIView *root, NSString *nativeID, int depth)
+{
+  return RNSZoomFindViewByNativeIDCapped(root, nativeID, depth, RNSZoomFindDepthCap);
 }
 
 // Collects every view matching the nativeID (badge overlays — there may be several).
@@ -288,7 +306,7 @@ static void RNSZoomHoldOpacity(UIView *_Nullable view, CGFloat value)
   CABasicAnimation *hold = [CABasicAnimation animationWithKeyPath:@"opacity"];
   hold.fromValue = @(value);
   hold.toValue = @(value);
-  hold.duration = 3600;
+  hold.duration = 3600; // effectively forever — released explicitly at the handoff / animationEnded backstop
   hold.removedOnCompletion = NO;
   hold.fillMode = kCAFillModeBoth;
   [view.layer addAnimation:hold forKey:RNSZoomOpacityHoldKey];
@@ -461,9 +479,11 @@ static void RNSZoomAddPageFadeRamp(UIView *view, NSTimeInterval duration, NSTime
   // animator completion, the presentation-layer holds would pin the shelf card and
   // dest cover invisible indefinitely — and Fabric can't repair them (the model is
   // already 1, so its writes are no-ops). Both calls are no-ops on the normal path,
-  // where the completion already ran before completeTransition. The card alpha
-  // matches the normal-path contract: session-hidden after a completed push (the
-  // reader shows the identical cover), visible in every other outcome.
+  // where the completion already ran before completeTransition. Card alpha:
+  // session-hidden after a completed push (the reader shows the identical cover),
+  // visible otherwise — deliberately coarser than the normal path, which also keeps
+  // it hidden on a CANCELLED pop; a visible card under the opaque reader is harmless
+  // and re-hidden by the next flight.
   const BOOL pushCompleted = _operation == UINavigationControllerOperationPush && transitionCompleted;
   [self zoomFinishCardFlightSettingCardAlpha:pushCompleted ? 0.0 : 1.0];
   RNSZoomRemoveOpacityRamp(_zoomRampedView);
@@ -850,9 +870,14 @@ static void RNSZoomAddPageFadeRamp(UIView *view, NSTimeInterval duration, NSTime
   animatedView.transform = RNSZoomArcLerpTransform(RNSZoomIdentityPose, shelfPose, at);
   maskView.frame = RNSZoomLerpRect(g.viewBounds, g.alignmentRect, at);
   maskView.layer.cornerRadius = MAX(RNSZoomLerp(RNSZoomBaseReaderRadius, g.maskSourceCornerRadius, at), 0);
-  dimmingView.alpha = RNSZoomDimMaxAlpha * (1 - RNSZoomClamp01(at));
+  dimmingView.alpha = RNSZoomDimAlphaAt(at);
 }
 
+// DECISION (review round 9): the per-flight animator scaffold around this helper
+// (linear UIViewPropertyAnimator + addAnimations with this call + start) is
+// deliberately repeated at each flight site, matching upstream's per-animation idiom
+// in this file; everything that must not drift (pose math, ramps, dim policy,
+// completion) is already extracted.
 // Uniform keyframe scaffold shared by EVERY zoom flight (card flights and masked
 // fallbacks): RNSZoomKeyframeCount equal keyframes sampling `pose(t)` at t in (0..1].
 // When `revealView` is non-nil an extra keyframe fades it to 1 over the first
@@ -1255,7 +1280,7 @@ static void RNSZoomCompleteTransition(
       RNSZoomAddFlightKeyframes(nil, 0, ^(CGFloat t) {
         const CGFloat at = 1 - RNSZoomEaseOutCubic(t);
         standIn.transform = [weakSelf zoomCardTransformForAt:at];
-        dimmingView.alpha = RNSZoomDimMaxAlpha * (1 - RNSZoomClamp01(at));
+        dimmingView.alpha = RNSZoomDimAlphaAt(at);
       });
     }];
     [animator addCompletion:^(UIViewAnimatingPosition finalPosition) {
@@ -1358,7 +1383,9 @@ static void RNSZoomCompleteTransition(
   const NSTimeInterval closeFlightDelay =
       RNSZoomDuration(screenForTiming.zoomCloseFlightDelayMs, RNSZoomCloseFlightDelay);
   const NSTimeInterval totalDuration = duration + closeFlightDelay;
-  const CGFloat delayFraction = closeFlightDelay / totalDuration;
+  // Clamped so a degenerate transitionDuration (0 is accepted upstream) still leaves
+  // the flight some span to move in instead of parking at the reader pose.
+  const CGFloat delayFraction = MIN(closeFlightDelay / totalDuration, 0.9);
 
   // Mid-load closes still have the reader's cover mounted: render it into the
   // stand-in so the close flight starts sharp too.
@@ -1395,7 +1422,7 @@ static void RNSZoomCompleteTransition(
       RNSZoomAddFlightKeyframes(standIn, revealFraction, ^(CGFloat t) {
         const CGFloat at = RNSZoomDelayedCloseEasing(t, delayFraction);
         standIn.transform = [weakSelf zoomCardTransformForAt:at];
-        dimmingView.alpha = RNSZoomDimMaxAlpha * (1 - RNSZoomClamp01(at));
+        dimmingView.alpha = RNSZoomDimAlphaAt(at);
       });
     }];
     [animator addCompletion:^(UIViewAnimatingPosition finalPosition) {
@@ -1447,7 +1474,10 @@ static void RNSZoomCompleteTransition(
 // multi-level pop past the shelf, a changed stackAnimation).
 + (void)restoreZoomSourceCardWithNativeID:(NSString *)nativeID inView:(UIView *)root
 {
-  UIView *cardView = RNSZoomFindViewByNativeID(root, nativeID, 0);
+  UIView *cardView = RNSZoomFindViewByNativeIDCapped(root, nativeID, 0, RNSZoomRestoreDepthCap);
+  if (cardView == nil && RNSZoomDebugEnabled) {
+    NSLog(@"RNSZOOM restore: source card '%@' not found under %@", nativeID, root);
+  }
   if (cardView != nil && cardView.alpha < 1) {
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
@@ -1590,7 +1620,7 @@ static void RNSZoomCompleteTransition(
       RNSZoomAddFlightKeyframes(standIn, revealFraction, ^(CGFloat t) {
         const CGFloat cp = RNSZoomCloseEasing(t);
         standIn.transform = RNSZoomArcLerpTransform(releasePose, slot, cp);
-        dimmingView.alpha = RNSZoomDimMaxAlpha * (1 - RNSZoomClamp01(cp));
+        dimmingView.alpha = RNSZoomDimAlphaAt(cp);
       });
     }];
     [flight startAnimation];
@@ -1612,7 +1642,7 @@ static void RNSZoomCompleteTransition(
     RNSZoomAddFlightKeyframes(nil, 0, ^(CGFloat t) {
       const CGFloat cp = RNSZoomCloseEasing(t);
       animatedView.transform = RNSZoomArcLerpTransform(releasePose, shelfPose, cp);
-      dimmingView.alpha = RNSZoomDimMaxAlpha * (1 - RNSZoomClamp01(cp));
+      dimmingView.alpha = RNSZoomDimAlphaAt(cp);
     });
   }];
   [flight startAnimation];
