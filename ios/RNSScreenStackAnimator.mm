@@ -195,6 +195,51 @@ static void RNSZoomCollectViewsByNativeID(UIView *root, NSString *nativeID, int 
 }
 
 
+static NSString *const RNSZoomOpacityHoldKey = @"RNSZoomOpacityHold";
+static NSString *const RNSZoomOpacityRampKey = @"RNSZoomOpacityRamp";
+
+// Fabric owns the model opacity of the screen/card/cover views and can rewrite it on
+// any commit mid-flight (a cached cover's onLoad commits within the first frames of
+// the push — the reader then flashed in at full alpha). Holding/ramping the
+// PRESENTATION with animator-owned, non-additive CA animations makes those writes
+// visually inert: the model stays 1, so Fabric writing 1 is a no-op, and the display
+// follows our animation until it's removed.
+static void RNSZoomHoldOpacity(UIView *_Nullable view, CGFloat value)
+{
+  CABasicAnimation *hold = [CABasicAnimation animationWithKeyPath:@"opacity"];
+  hold.fromValue = @(value);
+  hold.toValue = @(value);
+  hold.duration = 3600;
+  hold.removedOnCompletion = NO;
+  hold.fillMode = kCAFillModeBoth;
+  [view.layer addAnimation:hold forKey:RNSZoomOpacityHoldKey];
+}
+
+static void RNSZoomReleaseOpacityHold(UIView *_Nullable view)
+{
+  [view.layer removeAnimationForKey:RNSZoomOpacityHoldKey];
+}
+
+// Presentation-side opacity ramp along the flight's keyframe times.
+static void RNSZoomAddOpacityRamp(UIView *view, NSTimeInterval duration, CGFloat (^valueAt)(CGFloat t))
+{
+  NSMutableArray<NSNumber *> *values = [NSMutableArray arrayWithCapacity:RNSZoomKeyframeCount + 1];
+  for (int i = 0; i <= RNSZoomKeyframeCount; i++) {
+    [values addObject:@(valueAt((CGFloat)i / RNSZoomKeyframeCount))];
+  }
+  CAKeyframeAnimation *ramp = [CAKeyframeAnimation animationWithKeyPath:@"opacity"];
+  ramp.values = values;
+  ramp.duration = duration;
+  ramp.removedOnCompletion = NO;
+  ramp.fillMode = kCAFillModeBoth;
+  [view.layer addAnimation:ramp forKey:RNSZoomOpacityRampKey];
+}
+
+static void RNSZoomRemoveOpacityRamp(UIView *_Nullable view)
+{
+  [view.layer removeAnimationForKey:RNSZoomOpacityRampKey];
+}
+
 @implementation RNSScreenStackAnimator {
   UINavigationControllerOperation _operation;
   NSTimeInterval _transitionDuration;
@@ -838,8 +883,10 @@ static BOOL RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
   }
   [CATransaction begin];
   [CATransaction setDisableActions:YES];
+  RNSZoomReleaseOpacityHold(destCover);
   destCover.alpha = 1.0;
   if (cardView != nil) {
+    RNSZoomReleaseOpacityHold(cardView);
     cardView.alpha = alpha;
   }
   [flyingView.layer removeAllAnimations];
@@ -867,6 +914,7 @@ static BOOL RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
   UIView *container = transitionContext.containerView;
   CGRect sourceRectInWindow = RNSZoomRectFromDictionary(screen.zoomSourceRect);
   CGRect alignmentRect = RNSZoomRectFromDictionary(screen.zoomAlignmentRect);
+
 
   if (CGRectIsNull(sourceRectInWindow) || CGRectIsNull(alignmentRect)) {
     // Without valid rects there is nothing to zoom from/to — degrade to a fade.
@@ -957,11 +1005,16 @@ static BOOL RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
       // the legacy overlay was the only cover on screen — and reveals at landing.
       _zoomDestCoverView = destCover;
       [UIView performWithoutAnimation:^{
-        animatedView.alpha = 0.0;
-        cardView.alpha = 0.0;
-        destCover.alpha = 0.0;
         flyingCard.transform = [self zoomCardTransformForAt:1];
       }];
+      // Presentation-side hides/ramp (models stay 1): immune to Fabric commits
+      // rewriting opacity mid-flight. Released atomically in finishCardFlight.
+      RNSZoomHoldOpacity(cardView, 0);
+      RNSZoomHoldOpacity(destCover, 0);
+      RNSZoomAddOpacityRamp(animatedView, duration, ^CGFloat(CGFloat t) {
+        // Backdrop ramp: JS interpolated progress [0, 0.85] -> opacity [0, 1].
+        return MIN(RNSZoomOpenEasing(t) / 0.85, 1.0);
+      });
     }
 
     UIViewPropertyAnimator *animator = [[UIViewPropertyAnimator alloc] initWithDuration:duration
@@ -981,10 +1034,6 @@ static BOOL RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
                                                                   animations:^{
                                                                     flyingCard.transform =
                                                                         [weakSelf zoomCardTransformForAt:at];
-                                                                    // Backdrop ramp: JS interpolated progress
-                                                                    // [0, 0.85] -> opacity [0, 1].
-                                                                    animatedView.alpha =
-                                                                        MIN((1 - at) / 0.85, 1.0);
                                                                     dimmingView.alpha =
                                                                         RNSZoomDimMaxAlpha * (1 - RNSZoomClamp01(at));
                                                                   }];
@@ -1001,6 +1050,7 @@ static BOOL RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
       // Completed: card stays session-hidden under the now-opaque reader. Cancelled:
       // it reappears exactly as the snapshot vanishes (same transaction).
       [strongSelf zoomFinishCardFlightSettingCardAlpha:completed ? 0.0 : 1.0];
+      RNSZoomRemoveOpacityRamp(animatedView);
       animatedView.alpha = 1.0;
       [dimmingView removeFromSuperview];
       [transitionContext completeTransition:completed];
@@ -1114,6 +1164,7 @@ static BOOL RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
         strongSelf->_zoomMaskLayer = nil;
       }
       animatedView.transform = CGAffineTransformIdentity;
+      RNSZoomRemoveOpacityRamp(animatedView);
       animatedView.alpha = 1.0;
       [progressCarrier removeFromSuperview];
       [dimmingView removeFromSuperview];
@@ -1142,6 +1193,11 @@ static BOOL RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
     const CGFloat revealFraction = MIN(RNSZoomCloseRevealDuration / totalDuration, 1.0);
     const CGFloat pageFadeFraction = MIN(RNSZoomClosePageFadeDuration / totalDuration, 1.0);
 
+    // Presentation-side page fade: Fabric commits mid-close must not restore the page.
+    RNSZoomAddOpacityRamp(animatedView, totalDuration, ^CGFloat(CGFloat t) {
+      return MAX(1.0 - t / pageFadeFraction, 0.0);
+    });
+
     UIViewPropertyAnimator *animator = [[UIViewPropertyAnimator alloc] initWithDuration:totalDuration
                                                                                   curve:UIViewAnimationCurveLinear
                                                                              animations:nil];
@@ -1154,11 +1210,6 @@ static BOOL RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
                                                           relativeDuration:revealFraction
                                                                 animations:^{
                                                                   flyingCard.alpha = 1.0;
-                                                                }];
-                                  [UIView addKeyframeWithRelativeStartTime:0
-                                                          relativeDuration:pageFadeFraction
-                                                                animations:^{
-                                                                  animatedView.alpha = 0.0;
                                                                 }];
                                   for (int i = 1; i <= RNSZoomKeyframeCount; i++) {
                                     const CGFloat t = (CGFloat)i / RNSZoomKeyframeCount;
@@ -1181,6 +1232,7 @@ static BOOL RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
       const BOOL completed = ![transitionContext transitionWasCancelled];
       RNSScreenStackAnimator *strongSelf = weakSelf;
       [strongSelf zoomFinishCardFlightSettingCardAlpha:completed ? 1.0 : 0.0];
+      RNSZoomRemoveOpacityRamp(animatedView);
       animatedView.alpha = 1.0;
       [dimmingView removeFromSuperview];
       [transitionContext completeTransition:completed];
@@ -1343,6 +1395,10 @@ static BOOL RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
     UIViewPropertyAnimator *flight = [[UIViewPropertyAnimator alloc] initWithDuration:_transitionDuration
                                                                                 curve:UIViewAnimationCurveLinear
                                                                            animations:nil];
+    // Presentation-side page fade: Fabric commits mid-close must not restore the page.
+    RNSZoomAddOpacityRamp(animatedView, _transitionDuration, ^CGFloat(CGFloat t) {
+      return MAX(1.0 - t / pageFadeFraction, 0.0);
+    });
     [flight addAnimations:^{
       [UIView animateKeyframesWithDuration:0
                                      delay:0
@@ -1352,11 +1408,6 @@ static BOOL RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
                                                           relativeDuration:revealFraction
                                                                 animations:^{
                                                                   flyingCard.alpha = 1.0;
-                                                                }];
-                                  [UIView addKeyframeWithRelativeStartTime:0
-                                                          relativeDuration:pageFadeFraction
-                                                                animations:^{
-                                                                  animatedView.alpha = 0.0;
                                                                 }];
                                   for (int i = 1; i <= RNSZoomKeyframeCount; i++) {
                                     const CGFloat t = (CGFloat)i / RNSZoomKeyframeCount;
