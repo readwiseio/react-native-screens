@@ -195,6 +195,16 @@ static void RNSZoomCollectViewsByNativeID(UIView *root, NSString *nativeID, int 
 }
 
 
+// ===== RNSZOOM DEBUG SWITCH (set NO / 1.0 before shipping) =====
+// Borders: red = flying stand-in, blue = real shelf card; the reader loading cover's
+// green border lives in JS (bookwise ReaderZoomLoadingCover, COVER_ZOOM_DEBUG).
+static const BOOL RNSZoomDebugEnabled = NO;
+// 1.0 = real speed; 0.1 = 10x slow motion. NOTE: slow motion distorts the property
+// animator's first frames (pacing rebases) — trust it for element attribution only,
+// never for timing.
+static const float RNSZoomDebugAnimationSpeed = 1.0;
+// ===== END RNSZOOM DEBUG SWITCH =====
+
 static NSString *const RNSZoomOpacityHoldKey = @"RNSZoomOpacityHold";
 static NSString *const RNSZoomOpacityRampKey = @"RNSZoomOpacityRamp";
 
@@ -320,6 +330,9 @@ static void RNSZoomRemoveOpacityRamp(UIView *_Nullable view)
   }
 
   _animatedScreen = screen;
+  if (RNSZoomDebugEnabled) {
+    NSLog(@"RNSZOOM animateTransition op=%ld anim=%ld", (long)_operation, (long)(screen != nil ? screen.stackAnimation : -1));
+  }
 
   if (screen != nil) {
     if ([screen.reactSuperview isKindOfClass:[RNSScreenStackView class]] &&
@@ -856,6 +869,24 @@ static BOOL RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
     }
 
     flyingView = [[UIImageView alloc] initWithImage:cardImage];
+    if (RNSZoomDebugEnabled) {
+    UIView *debugFlyingPaint = [[UIView alloc] initWithFrame:flyingView.bounds];
+    debugFlyingPaint.layer.borderColor = UIColor.redColor.CGColor;
+    debugFlyingPaint.layer.borderWidth = 6;
+    debugFlyingPaint.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    debugFlyingPaint.userInteractionEnabled = NO;
+    [flyingView addSubview:debugFlyingPaint];
+    if ([cardView viewWithTag:987654] == nil) {
+      UIView *debugCardPaint = [[UIView alloc] initWithFrame:cardView.bounds];
+      debugCardPaint.tag = 987654;
+      debugCardPaint.accessibilityIdentifier = @"RNSZoomCoverBadge";
+      debugCardPaint.layer.borderColor = UIColor.blueColor.CGColor;
+      debugCardPaint.layer.borderWidth = 6;
+      debugCardPaint.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+      debugCardPaint.userInteractionEnabled = NO;
+      [cardView addSubview:debugCardPaint];
+    }
+    }
     flyingView.frame = alignmentRect;
     flyingView.userInteractionEnabled = NO;
     [container addSubview:flyingView];
@@ -912,6 +943,9 @@ static BOOL RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
   }
 
   UIView *container = transitionContext.containerView;
+  if (RNSZoomDebugEnabled && RNSZoomDebugAnimationSpeed != 1.0f) {
+    container.layer.speed = RNSZoomDebugAnimationSpeed;
+  }
   CGRect sourceRectInWindow = RNSZoomRectFromDictionary(screen.zoomSourceRect);
   CGRect alignmentRect = RNSZoomRectFromDictionary(screen.zoomAlignmentRect);
 
@@ -1057,6 +1091,9 @@ static BOOL RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
     }];
     _inFlightAnimator = animator;
     [animator startAnimation];
+        }
+      });
+    }
     return;
   }
 
