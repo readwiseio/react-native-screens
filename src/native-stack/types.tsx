@@ -187,31 +187,34 @@ export type NativeStackNavigationOptions = {
    */
   gestureResponseDistance?: ScreenProps['gestureResponseDistance'];
   /**
-   * Source rect the screen zooms out of when `stackAnimation` is `zoom`.
+   * Readwise: source rect (in window coordinates) the screen zooms out of when
+   * `stackAnimation` is `zoom`.
    *
    * @platform ios
    */
   zoomSourceRect?: ScreenProps['zoomSourceRect'];
   /**
-   * Frame within the pushed screen that lands on `zoomSourceRect` when `stackAnimation` is `zoom`.
+   * Readwise: frame within the pushed screen that lands on `zoomSourceRect` when
+   * `stackAnimation` is `zoom`.
    *
    * @platform ios
    */
   zoomAlignmentRect?: ScreenProps['zoomAlignmentRect'];
   /**
-   * Corner radius of the source view for the zoom transition mask.
+   * Readwise: corner radius of the source view for the zoom transition mask.
    *
    * @platform ios
    */
   zoomSourceCornerRadius?: ScreenProps['zoomSourceCornerRadius'];
   /**
-   * When true, the zoom dismiss pan only starts from the left-edge strip.
+   * Readwise: when true, the zoom dismiss pan only starts from the left-edge strip.
    *
    * @platform ios
    */
   zoomDismissEdgeOnly?: ScreenProps['zoomDismissEdgeOnly'];
   /**
-   * nativeID of the source card view for the portal-style zoom flight.
+   * Readwise: nativeID of the source card view the zoom flight starts from (a snapshot
+   * stand-in of its cover flies — the real card is never reparented).
    *
    * @platform ios
    */
@@ -486,11 +489,17 @@ export type NativeStackNavigationOptions = {
    */
   sheetLargestUndimmedDetentIndex?: ScreenProps['sheetLargestUndimmedDetentIndex'];
   /**
-   * Readwise: maximum sheet width on iPad; 0 keeps the platform default.
+   * Readwise: maximum sheet width; 0 keeps the platform default. When active it also
+   * overrides the sheet height to `windowHeight * firstAllowedDetent` (0.85 default) —
+   * see `sheetMaxWidth` in types.tsx for the full behavior.
+   *
+   * @platform ios
    */
   sheetMaxWidth?: ScreenProps['sheetMaxWidth'];
   /**
-   * Readwise: extra bottom inset applied to the sheet.
+   * Readwise: extra bottom inset applied to the sheet (as additional safe area).
+   *
+   * @platform ios
    */
   sheetBottomInset?: ScreenProps['sheetBottomInset'];
   /**
@@ -506,6 +515,7 @@ export type NativeStackNavigationOptions = {
    * - "slide_from_left" - slide in the new screen from left to right
    * - "ios_from_right" - iOS like slide in animation. pushes in the new screen from right to left (Android only, resolves to default transition on iOS)
    * - "ios_from_left" - iOS like slide in animation. pushes in the new screen from left to right (Android only, resolves to default transition on iOS)
+   * - "zoom" - Readwise: Apple Books-style zoom from `zoomSourceRect` onto `zoomAlignmentRect` (iOS only, resolves to default transition on Android)
    * - "none" – the screen appears/dissapears without an animation
    */
   stackAnimation?: ScreenProps['stackAnimation'];

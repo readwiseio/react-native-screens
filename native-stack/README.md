@@ -335,6 +335,7 @@ How the given screen should appear/disappear when pushed or popped at the top of
 - `slide_from_left` - slide in the new screen from left to right
 - `"ios_from_right"` - iOS like slide in animation. pushes in the new screen from right to left (Android only, resolves to default transition on iOS)
 - `"ios_from_left"` - iOS like slide in animation. pushes in the new screen from left to right (Android only, resolves to default transition on iOS)
+- `zoom` - Readwise: Apple Books-style zoom from `zoomSourceRect` onto `zoomAlignmentRect` (iOS only, resolves to default transition on Android)
 - `none` - the screen appears/disappears without an animation.
 
 Defaults to `default`.

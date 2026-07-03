@@ -966,8 +966,14 @@ RNS_IGNORE_SUPER_CALL_END
  */
 - (void)updateFormSheetPresentationStyle
 {
-  if (_stackPresentation != RNSScreenStackPresentationFormSheet &&
-      _stackPresentation != RNSScreenStackPresentationPageSheet) {
+  // pageSheet screens enter this method ONLY when the fork-added sizing props are set —
+  // widening unconditionally would hand grabber/corner-radius/detent handling to every
+  // pre-existing pageSheet screen. The other formSheet-only gates in this file
+  // (content-height / keyboard handling) are deliberately left untouched.
+  const BOOL isFormSheet = _stackPresentation == RNSScreenStackPresentationFormSheet;
+  const BOOL isCustomizedPageSheet = _stackPresentation == RNSScreenStackPresentationPageSheet &&
+      (_sheetMaxWidth > 0 || _sheetBottomInset > 0);
+  if (!isFormSheet && !isCustomizedPageSheet) {
     return;
   }
 
@@ -1070,35 +1076,48 @@ RNS_IGNORE_SUPER_CALL_END
     [self setCornerRadiusForSheet:sheet to:_sheetCornerRadius animate:YES];
 
     // Custom sheet sizing via preferredContentSize.
-    // Only constrain width when the screen is wider than sheetMaxWidth.
-    // Guard each setter so redundant assignments don't trigger re-layout.
-    CGFloat screenWidth = UIScreen.mainScreen.bounds.size.width;
-    if (_sheetMaxWidth > 0 && screenWidth > _sheetMaxWidth) {
+    // Only constrain width when the window is wider than sheetMaxWidth. Sized from the
+    // window (not UIScreen.mainScreen — wrong under Split View / Stage Manager), with a
+    // mainScreen fallback for prop updates that land before the view is in a window.
+    // Guard each setter so redundant assignments don't trigger re-layout, and reset to
+    // the defaults when the props return to 0 (or rotation drops the window below the
+    // cap) so stale size/inset state doesn't linger on the controller.
+    const CGRect windowBounds = self.window != nil ? self.window.bounds : UIScreen.mainScreen.bounds;
+    if (_sheetMaxWidth > 0 && windowBounds.size.width > _sheetMaxWidth) {
       if (@available(iOS 17.0, *)) {
         if (sheet.prefersPageSizing != NO) {
           sheet.prefersPageSizing = NO;
         }
       }
 
-      CGFloat screenHeight = UIScreen.mainScreen.bounds.size.height;
       CGFloat detentFraction = 0.85;
       if (_sheetAllowedDetents.count > 0 && _sheetAllowedDetents[0].floatValue > 0) {
         detentFraction = _sheetAllowedDetents[0].floatValue;
       }
-      CGSize newSize = CGSizeMake(_sheetMaxWidth, screenHeight * detentFraction);
+      CGSize newSize = CGSizeMake(_sheetMaxWidth, windowBounds.size.height * detentFraction);
       if (!CGSizeEqualToSize(_controller.preferredContentSize, newSize)) {
         _controller.preferredContentSize = newSize;
       }
 
-      sheet.widthFollowsPreferredContentSizeWhenEdgeAttached = YES;
-      sheet.prefersEdgeAttachedInCompactHeight = YES;
+      if (sheet.widthFollowsPreferredContentSizeWhenEdgeAttached != YES) {
+        sheet.widthFollowsPreferredContentSizeWhenEdgeAttached = YES;
+      }
+      if (sheet.prefersEdgeAttachedInCompactHeight != YES) {
+        sheet.prefersEdgeAttachedInCompactHeight = YES;
+      }
+    } else {
+      if (!CGSizeEqualToSize(_controller.preferredContentSize, CGSizeZero)) {
+        _controller.preferredContentSize = CGSizeZero;
+      }
+      if (sheet.widthFollowsPreferredContentSizeWhenEdgeAttached != NO) {
+        sheet.widthFollowsPreferredContentSizeWhenEdgeAttached = NO;
+      }
     }
 
-    if (_sheetBottomInset > 0) {
-      UIEdgeInsets newInsets = UIEdgeInsetsMake(0, 0, _sheetBottomInset, 0);
-      if (!UIEdgeInsetsEqualToEdgeInsets(_controller.additionalSafeAreaInsets, newInsets)) {
-        _controller.additionalSafeAreaInsets = newInsets;
-      }
+    UIEdgeInsets newInsets =
+        _sheetBottomInset > 0 ? UIEdgeInsetsMake(0, 0, _sheetBottomInset, 0) : UIEdgeInsetsZero;
+    if (!UIEdgeInsetsEqualToEdgeInsets(_controller.additionalSafeAreaInsets, newInsets)) {
+      _controller.additionalSafeAreaInsets = newInsets;
     }
 
     // lud - largest undimmed detent

@@ -140,7 +140,8 @@ open class ScreenViewManager :
     ) {
         view.stackAnimation =
             when (animation) {
-                null, "default", "flip", "simple_push" -> Screen.StackAnimation.DEFAULT
+                // "zoom" is iOS-only (Apple Books style); folded into DEFAULT like the other iOS-only animations.
+                null, "default", "flip", "simple_push", "zoom" -> Screen.StackAnimation.DEFAULT
                 "none" -> Screen.StackAnimation.NONE
                 "fade" -> Screen.StackAnimation.FADE
                 "slide_from_right" -> Screen.StackAnimation.SLIDE_FROM_RIGHT

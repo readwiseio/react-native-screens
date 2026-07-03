@@ -24,9 +24,10 @@
 /// YES while an interactive zoom pop is being driven manually by the drag.
 @property (nonatomic, readonly) BOOL isZoomInteractive;
 
-/// Duration factors (relative to the transition duration) the interaction controller
-/// should use when continuing the progress-carrier animator on finish/cancel, so it
-/// completes together with the manual flight/spring driven here.
+/// Duration factor (relative to the transition duration) the interaction controller
+/// should use when continuing the progress-carrier animator after a CANCELLED drag,
+/// so it completes together with the cancel spring driven here. (The finish factor is
+/// computed inline in RNSPercentDrivenInteractiveTransition.)
 - (CGFloat)zoomCancelDurationScale;
 
 /// Applies the live drag pose (finger-follow + eased shrink + corner morph) to the

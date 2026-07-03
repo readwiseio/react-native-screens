@@ -176,34 +176,36 @@ export interface ScreenProps extends ViewProps {
    */
   gestureResponseDistance?: GestureResponseDistanceType;
   /**
-   * Source rect (in window coordinates) the screen zooms out of when `stackAnimation` is `zoom`.
+   * Readwise: source rect (in window coordinates) the screen zooms out of when
+   * `stackAnimation` is `zoom`.
    *
    * @platform ios
    */
   zoomSourceRect?: ZoomTransitionRectType;
   /**
-   * Frame within the pushed screen that should land on `zoomSourceRect` (e.g. a cover image box).
-   * Used when `stackAnimation` is `zoom`.
+   * Readwise: frame within the pushed screen that should land on `zoomSourceRect`
+   * (e.g. a cover image box). Used when `stackAnimation` is `zoom`.
    *
    * @platform ios
    */
   zoomAlignmentRect?: ZoomTransitionRectType;
   /**
-   * Corner radius of the source view, so the zoom mask matches it at the source end.
+   * Readwise: corner radius of the source view, so the zoom mask matches it at the source end.
    *
    * @platform ios
    */
   zoomSourceCornerRadius?: number;
   /**
-   * When true, the zoom dismiss pan only starts from the left-edge strip with a rightward
-   * pull; when false (default) it starts anywhere, in any direction.
+   * Readwise: when true, the zoom dismiss pan only starts from the left-edge strip with a
+   * rightward pull; when false (default) it starts anywhere, in any direction.
    *
    * @platform ios
    */
   zoomDismissEdgeOnly?: boolean;
   /**
-   * nativeID of the source card view in the screen below. When found, the zoom
-   * transition natively reparents and flies the actual card view (portal-style).
+   * Readwise: nativeID of the source card view in the screen below. When found, the zoom
+   * transition flies a full-resolution snapshot stand-in of its cover (the real card is
+   * never reparented — Fabric owns it) and hands visibility off atomically at both ends.
    *
    * @platform ios
    */
@@ -390,8 +392,12 @@ export interface ScreenProps extends ViewProps {
    */
   sheetElevation?: number;
   /**
-   * Maximum width of the sheet in points.
-   * When > 0, the sheet will be constrained to this width and centered.
+   * Readwise: maximum width of the sheet in points.
+   * When > 0 and the window is wider than this value, the sheet is constrained to this
+   * width and centered. The native side then also disables `prefersPageSizing` (iOS 17+)
+   * and overrides the sheet HEIGHT via `preferredContentSize` to
+   * `windowHeight * firstAllowedDetent` (0.85 when no detents are set) — with multiple
+   * detents the height follows the first one, not the selected detent.
    * Works only when `stackPresentation` is set to `formSheet` or `pageSheet`.
    * Defaults to `0` (no constraint).
    *
@@ -399,7 +405,7 @@ export interface ScreenProps extends ViewProps {
    */
   sheetMaxWidth?: number;
   /**
-   * Bottom inset for the sheet content.
+   * Readwise: bottom inset for the sheet content (applied as additional safe area).
    * Works only when `stackPresentation` is set to `formSheet` or `pageSheet`.
    * Defaults to `0`.
    *
@@ -487,6 +493,7 @@ export interface ScreenProps extends ViewProps {
    * - "slide_from_left" - slide in the new screen from left to right
    * - "ios_from_right" - iOS like slide in animation. pushes in the new screen from right to left (Android only, resolves to default transition on iOS)
    * - "ios_from_left" - iOS like slide in animation. pushes in the new screen from left to right (Android only, resolves to default transition on iOS)
+   * - "zoom" - Readwise: Apple Books-style zoom from `zoomSourceRect` onto `zoomAlignmentRect` (iOS only, resolves to default transition on Android)
    * - "none" – the screen appears/dissapears without an animation
    */
   stackAnimation?: StackAnimationTypes;

@@ -89,16 +89,17 @@ namespace react = facebook::react;
 @property (nonatomic, copy) NSDictionary *gestureResponseDistance;
 // Props for the zoom (Apple Books style) stack animation. Rects are dictionaries
 // with x/y/width/height keys; source rect is in window coordinates, alignment rect
-// is the cover's frame within the pushed screen. width == 0 means "unset".
+// is the cover's frame within the pushed screen. Non-positive width/height means "unset".
 @property (nonatomic, copy, nullable) NSDictionary *zoomSourceRect;
 @property (nonatomic, copy, nullable) NSDictionary *zoomAlignmentRect;
 @property (nonatomic) CGFloat zoomSourceCornerRadius;
 // When set, the zoom dismiss pan only starts from the left-edge strip with a clear
 // rightward pull (the "book is readable" regime); otherwise any direction anywhere.
 @property (nonatomic) BOOL zoomDismissEdgeOnly;
-// nativeID of the source card view (in the screen below). When found, the zoom
-// reparents and flies the actual card view — the native equivalent of a JS portal —
-// so the landing handoff is seamless by construction.
+// nativeID of the source card view (in the screen below). When found, the zoom flies
+// a full-resolution snapshot stand-in of its cover (the real card is never reparented —
+// Fabric owns it) and hands visibility off atomically at both ends, so the landing
+// is seamless by construction.
 @property (nonatomic, copy, nullable) NSString *zoomSourceViewNativeID;
 @property (nonatomic) int activityState;
 @property (nonatomic, nullable) NSString *screenId;

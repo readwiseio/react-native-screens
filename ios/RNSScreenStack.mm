@@ -1142,8 +1142,6 @@ RNS_IGNORE_SUPER_CALL_END
     _zoomSwipeEdgeOnly = topScreen.zoomDismissEdgeOnly;
   }
   BOOL edgeOnly = _zoomSwipeEdgeOnly;
-  if (gestureRecognizer.state != UIGestureRecognizerStateChanged) {
-  }
 
   float dragDistance = edgeOnly ? MAX((float)translation.x, 0.f) : (float)hypot(translation.x, translation.y);
   float dragVelocity = edgeOnly ? (float)velocity.x : (float)hypot(velocity.x, velocity.y);
