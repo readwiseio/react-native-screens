@@ -490,8 +490,9 @@ export type NativeStackNavigationOptions = {
   sheetLargestUndimmedDetentIndex?: ScreenProps['sheetLargestUndimmedDetentIndex'];
   /**
    * Readwise: maximum sheet width; 0 keeps the platform default. When active it also
-   * overrides the sheet height to `windowHeight * firstAllowedDetent` (0.85 default) —
-   * see `sheetMaxWidth` in types.tsx for the full behavior.
+   * overrides the sheet height to `windowHeight * firstAllowedDetent` (full window
+   * height with the default `[1.0]` detents) — see `sheetMaxWidth` in types.tsx for
+   * the full behavior.
    *
    * @platform ios
    */

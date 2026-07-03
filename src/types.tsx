@@ -396,8 +396,10 @@ export interface ScreenProps extends ViewProps {
    * When > 0 and the window is wider than this value, the sheet is constrained to this
    * width and centered. The native side then also disables `prefersPageSizing` (iOS 17+)
    * and overrides the sheet HEIGHT via `preferredContentSize` to
-   * `windowHeight * firstAllowedDetent` (0.85 when no detents are set) — with multiple
-   * detents the height follows the first one, not the selected detent.
+   * `windowHeight * firstAllowedDetent` — with multiple detents the height follows the
+   * first one, not the selected detent. With the default detents (`[1.0]`) that is the
+   * full window height; the native 0.85 fallback only applies when the first detent is
+   * non-positive (e.g. `fitToContents`).
    * Works only when `stackPresentation` is set to `formSheet` or `pageSheet`.
    * Defaults to `0` (no constraint).
    *

@@ -44,6 +44,9 @@ namespace react = facebook::react;
 
 constexpr NSInteger SHEET_FIT_TO_CONTENTS = -1;
 constexpr NSInteger SHEET_LARGEST_UNDIMMED_DETENT_NONE = -1;
+// Readwise: sheetMaxWidth height fallback when the first allowed detent is
+// non-positive (e.g. fitToContents). With JS's default detents ([1.0]) it never fires.
+constexpr CGFloat RNSSheetMaxWidthFallbackDetentFraction = 0.85;
 
 struct ContentWrapperBox {
   __weak RNSScreenContentWrapper *contentWrapper{nil};
@@ -971,6 +974,7 @@ RNS_IGNORE_SUPER_CALL_END
  * Note that this method should not be called inside `stackPresentation` setter, because on Paper we don't have
  * guarantee that values of all related props had been updated earlier. It should be invoked from `didSetProps`.
  * On Fabric we run it from `finalizeUpdates` if props have changed.
+ * Readwise: also entered for pageSheet screens while the fork sizing props are (or were) set.
  */
 - (void)updateFormSheetPresentationStyle
 {
@@ -1092,9 +1096,11 @@ RNS_IGNORE_SUPER_CALL_END
     // Only constrain width when the window is wider than sheetMaxWidth. Sized from the
     // window (not UIScreen.mainScreen — wrong under Split View / Stage Manager), with a
     // mainScreen fallback for prop updates that land before the view is in a window.
-    // Guard each setter so redundant assignments don't trigger re-layout, and reset to
-    // the defaults when the props return to 0 (or rotation drops the window below the
-    // cap) so stale size/inset state doesn't linger on the controller.
+    // Guard each setter so redundant assignments don't trigger re-layout, and reset
+    // when the props return to 0 so stale size/inset state doesn't linger. NOTE:
+    // this method runs on prop commits only — a rotation with an active sheetMaxWidth
+    // keeps the height computed from the pre-rotation window until the next commit
+    // re-enters here.
     const CGRect windowBounds = self.window != nil ? self.window.bounds : UIScreen.mainScreen.bounds;
     if (_sheetMaxWidth > 0 && windowBounds.size.width > _sheetMaxWidth) {
       // Capture the pre-force values once so the reset branch restores what the sheet
@@ -1113,7 +1119,10 @@ RNS_IGNORE_SUPER_CALL_END
         }
       }
 
-      CGFloat detentFraction = 0.85;
+      // Height follows the first allowed detent. The fallback only applies when the
+      // first detent is non-positive (e.g. fitToContents, sent as [-1]) — JS defaults
+      // detents to [1.0], so "no detents set" resolves to full window height.
+      CGFloat detentFraction = RNSSheetMaxWidthFallbackDetentFraction;
       if (_sheetAllowedDetents.count > 0 && _sheetAllowedDetents[0].floatValue > 0) {
         detentFraction = _sheetAllowedDetents[0].floatValue;
       }

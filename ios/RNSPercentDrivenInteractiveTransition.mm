@@ -56,31 +56,25 @@
 
   BOOL shouldReverseAnimation = cancelled;
 
-  if (_animationController.isZoomInteractive) {
-    // The zoom drag drives the screen pose manually; the carrier here only holds the
-    // UIKit progress (an invisible dummy view). Continue it linearly so it completes
-    // in one flight duration (durationFactor scales the FULL timeline — (1 - fraction)
-    // yields a constant real remaining time, matching the manual flight; anything
-    // larger keeps the transition alive for duration/(1 - fraction)). Cancel matches
-    // the cancel spring (RNSZoomCancelSpringDuration).
-    UICubicTimingParameters *linearTiming =
-        [[UICubicTimingParameters alloc] initWithAnimationCurve:UIViewAnimationCurveLinear];
-    CGFloat durationFactor = 1 - animator.fractionComplete;
-    if (cancelled) {
-      durationFactor *= [_animationController zoomCancelDurationScale];
-    }
-    [animator pauseAnimation];
-    [animator setReversed:shouldReverseAnimation];
-    [animator continueAnimationWithTimingParameters:linearTiming durationFactor:durationFactor];
-    _animationController = nil;
-    return;
-  }
-
   id<UITimingCurveProvider> timingParams = [_animationController timingParamsForAnimationCompletion];
+
+  CGFloat durationFactor = 1 - animator.fractionComplete;
+  if (cancelled && _animationController.isZoomInteractive) {
+    // The zoom drag drives the screen pose manually; the carrier (an invisible dummy
+    // view) only holds the UIKit progress, and timingParamsForAnimationCompletion
+    // returns linear for it. VERIFIED with a timing probe (PR #1 round 4, deep-drag
+    // commit at fraction 0.888): despite how the continueAnimation docs read, the
+    // observed remaining run time here is durationFactor x originalDuration
+    // / (1 - fractionComplete) — so the default (1 - fraction) factor above yields a
+    // CONSTANT remaining time of one full duration, matching the commit flight
+    // (factor 1.0 held the transition open for D / (1 - fraction) ~= 3.8s). Only the
+    // cancel case is scaled, to match the cancel spring instead.
+    durationFactor *= [_animationController zoomCancelDurationScale];
+  }
 
   [animator pauseAnimation];
   [animator setReversed:shouldReverseAnimation];
-  [animator continueAnimationWithTimingParameters:timingParams durationFactor:(1 - animator.fractionComplete)];
+  [animator continueAnimationWithTimingParameters:timingParams durationFactor:durationFactor];
 
   // System retains it & we don't need it anymore.
   _animationController = nil;

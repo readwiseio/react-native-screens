@@ -170,9 +170,11 @@ static RNSZoomPose RNSZoomSlotPoseForGeometry(RNSZoomCardGeometry g)
 
 static const RNSZoomPose RNSZoomIdentityPose = {1, 0, 0};
 
-// Arc-split pose interpolation — the single transform builder for every zoom flight:
-// Y leads and X trails via RNSZoomArcCurve; scale lerps on `at` directly. `at` may
-// exceed 1 on the close overshoot (lerps extrapolate linearly).
+// Arc-split pose interpolation — the single transform builder for every zoom flight.
+// Y's interpolant lags X's in `at` space (RNSZoomArcCurve), so Y leads the open
+// flight (at 1 -> 0) and X leads the close (at 0 -> 1) — same arc, traversed in
+// reverse; scale lerps on `at` directly. `at` may exceed 1 on the close overshoot
+// (lerps extrapolate linearly).
 static CGAffineTransform RNSZoomArcLerpTransform(RNSZoomPose from, RNSZoomPose to, CGFloat at)
 {
   const CGFloat atY = RNSZoomArcCurve(at, RNSZoomArcLeadExp);
@@ -435,6 +437,19 @@ static void RNSZoomAddPageFadeRamp(UIView *view, NSTimeInterval duration)
   [self zoomFinishCardFlightSettingCardAlpha:pushCompleted ? 0.0 : 1.0];
   RNSZoomRemoveOpacityRamp(_zoomRampedView);
   _zoomRampedView = nil;
+  // Same backstop for the drag state the interactive carrier normally cleans up:
+  // an abnormally ended drag must not leave the drag mask or transform behind.
+  if (_isZoomInteractive) {
+    UIView *dragged = _zoomAnimatedView;
+    if (dragged != nil) {
+      if (_zoomMaskLayer != nil && dragged.layer.mask == _zoomMaskLayer) {
+        dragged.layer.mask = nil;
+      }
+      dragged.transform = CGAffineTransformIdentity;
+    }
+    _zoomMaskLayer = nil;
+    _isZoomInteractive = NO;
+  }
   _inFlightAnimator = nil;
   _animatedScreen = nil;
 }
@@ -1005,14 +1020,14 @@ static void RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
 // transition) the handoff no-ops, but the static cleanup still runs so the page can't
 // stay presentation-held at alpha 0.
 static void RNSZoomCompleteTransition(
-    RNSScreenStackAnimator *_Nullable animator,
+    RNSScreenStackAnimator *_Nullable stackAnimator,
     id<UIViewControllerContextTransitioning> transitionContext,
     UIView *animatedView,
     UIView *dimmingView,
     CGFloat cardAlphaOnComplete)
 {
   const BOOL completed = ![transitionContext transitionWasCancelled];
-  [animator zoomFinishCardFlightSettingCardAlpha:completed ? cardAlphaOnComplete : 1.0 - cardAlphaOnComplete];
+  [stackAnimator zoomFinishCardFlightSettingCardAlpha:completed ? cardAlphaOnComplete : 1.0 - cardAlphaOnComplete];
   RNSZoomRemoveOpacityRamp(animatedView);
   animatedView.alpha = 1.0;
   [dimmingView removeFromSuperview];
@@ -1170,6 +1185,10 @@ static void RNSZoomCompleteTransition(
 
   // Fallback: masked screen zoom out of the source rect. Also the landing spot when
   // the card snapshot fails (nil stand-in) — mirrors the pop path.
+  // maskView (not the drag path's bare-CALayer technique) is safe here: the invariant
+  // at the _zoomMaskLayer declaration is about reading an RN-assigned layer.mask
+  // mid-drag; RN never assigns its own mask to the screen view, and this setter runs
+  // only at transition setup/teardown.
   UIView *maskView = [[UIView alloc] init];
   maskView.backgroundColor = [UIColor blackColor];
   maskView.layer.cornerCurve = kCACornerCurveContinuous;
@@ -1182,13 +1201,14 @@ static void RNSZoomCompleteTransition(
   UIViewPropertyAnimator *animator = [[UIViewPropertyAnimator alloc] initWithDuration:duration
                                                                                 curve:UIViewAnimationCurveLinear
                                                                            animations:nil];
+  __weak RNSScreenStackAnimator *weakSelf = self;
   [animator addAnimations:^{
-    [self addZoomFlightKeyframesToView:animatedView
-                              maskView:maskView
-                           dimmingView:dimmingView
-                               easedAt:^CGFloat(CGFloat t) {
-                                 return 1 - RNSZoomEaseOutCubic(t);
-                               }];
+    [weakSelf addZoomFlightKeyframesToView:animatedView
+                                  maskView:maskView
+                               dimmingView:dimmingView
+                                   easedAt:^CGFloat(CGFloat t) {
+                                     return 1 - RNSZoomEaseOutCubic(t);
+                                   }];
   }];
   [animator addCompletion:^(UIViewAnimatingPosition finalPosition) {
     animatedView.maskView = nil;
@@ -1317,7 +1337,8 @@ static void RNSZoomCompleteTransition(
 
   // Fallback: masked screen zoom back into the source rect, with the exact
   // CLOSE_FLIGHT_EASING (overshoot) + arc after the reveal delay. Also the landing
-  // spot when the card snapshot fails (nil stand-in) — mirrors the push path.
+  // spot when the card snapshot fails (nil stand-in) — mirrors the push path
+  // (including its maskView-setter exemption note).
   UIView *maskView = [[UIView alloc] init];
   maskView.backgroundColor = [UIColor blackColor];
   maskView.layer.cornerCurve = kCACornerCurveContinuous;
@@ -1331,12 +1352,12 @@ static void RNSZoomCompleteTransition(
                                                                                 curve:UIViewAnimationCurveLinear
                                                                            animations:nil];
   [animator addAnimations:^{
-    [self addZoomFlightKeyframesToView:animatedView
-                              maskView:maskView
-                           dimmingView:dimmingView
-                               easedAt:^CGFloat(CGFloat t) {
-                                 return RNSZoomDelayedCloseEasing(t, delayFraction);
-                               }];
+    [weakSelf addZoomFlightKeyframesToView:animatedView
+                                  maskView:maskView
+                               dimmingView:dimmingView
+                                   easedAt:^CGFloat(CGFloat t) {
+                                     return RNSZoomDelayedCloseEasing(t, delayFraction);
+                                   }];
   }];
   [animator addCompletion:^(UIViewAnimatingPosition finalPosition) {
     animatedView.maskView = nil;
@@ -1397,7 +1418,6 @@ static void RNSZoomCompleteTransition(
 - (void)startZoomCommitFlightFromTranslation:(CGPoint)translation progress:(CGFloat)progress
 {
   UIView *animatedView = _zoomAnimatedView;
-  CALayer *maskLayer = _zoomMaskLayer;
   UIView *cardView = _zoomPendingCardView;
   // The dim is held at its resting alpha through the whole drag; the commit flight
   // owns its fade-out (keyframed with the flight below).
@@ -1583,6 +1603,11 @@ static void RNSZoomCompleteTransition(
 
 - (nullable id<UITimingCurveProvider>)timingParamsForAnimationCompletion
 {
+  if (_isZoomInteractive) {
+    // The zoom progress carrier is an invisible dummy view — linear keeps its
+    // completion proportional to real time (the visible flight is keyframed manually).
+    return [[UICubicTimingParameters alloc] initWithAnimationCurve:UIViewAnimationCurveLinear];
+  }
   return [RNSScreenStackAnimator defaultSpringTimingParametersApprox];
 }
 
