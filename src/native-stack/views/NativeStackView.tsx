@@ -214,6 +214,12 @@ const RouteView = ({
     zoomAlignmentRect,
     zoomSourceCornerRadius = 0,
     zoomDismissEdgeOnly = false,
+    zoomCloseFlightDelayMs = 0,
+    zoomCloseRevealMs = 0,
+    zoomClosePageFadeMs = 0,
+    zoomCommitRevealMs = 0,
+    zoomCancelSpringMs = 0,
+    zoomShowDebugBorders = false,
     zoomSourceViewNativeID,
     nativeBackButtonDismissalEnabled = false,
     navigationBarColor,
@@ -353,6 +359,12 @@ const RouteView = ({
       zoomAlignmentRect={zoomAlignmentRect}
       zoomSourceCornerRadius={zoomSourceCornerRadius}
       zoomDismissEdgeOnly={zoomDismissEdgeOnly}
+      zoomCloseFlightDelayMs={zoomCloseFlightDelayMs}
+      zoomCloseRevealMs={zoomCloseRevealMs}
+      zoomClosePageFadeMs={zoomClosePageFadeMs}
+      zoomCommitRevealMs={zoomCommitRevealMs}
+      zoomCancelSpringMs={zoomCancelSpringMs}
+      zoomShowDebugBorders={zoomShowDebugBorders}
       zoomSourceViewNativeID={zoomSourceViewNativeID}
       nativeBackButtonDismissalEnabled={nativeBackButtonDismissalEnabled}
       navigationBarColor={navigationBarColor}

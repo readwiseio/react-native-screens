@@ -44,6 +44,12 @@ public interface RNSScreenManagerInterface<T extends View>  {
   void setZoomSourceCornerRadius(T view, float value);
   void setZoomDismissEdgeOnly(T view, boolean value);
   void setZoomSourceViewNativeID(T view, @Nullable String value);
+  void setZoomCloseFlightDelayMs(T view, float value);
+  void setZoomCloseRevealMs(T view, float value);
+  void setZoomClosePageFadeMs(T view, float value);
+  void setZoomCommitRevealMs(T view, float value);
+  void setZoomCancelSpringMs(T view, float value);
+  void setZoomShowDebugBorders(T view, boolean value);
   void setStackPresentation(T view, @Nullable String value);
   void setStackAnimation(T view, @Nullable String value);
   void setTransitionDuration(T view, int value);

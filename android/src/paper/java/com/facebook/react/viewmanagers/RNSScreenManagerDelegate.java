@@ -109,6 +109,24 @@ public class RNSScreenManagerDelegate<T extends View, U extends BaseViewManager<
       case "zoomSourceViewNativeID":
         mViewManager.setZoomSourceViewNativeID(view, value == null ? null : (String) value);
         break;
+      case "zoomCloseFlightDelayMs":
+        mViewManager.setZoomCloseFlightDelayMs(view, value == null ? 0f : ((Double) value).floatValue());
+        break;
+      case "zoomCloseRevealMs":
+        mViewManager.setZoomCloseRevealMs(view, value == null ? 0f : ((Double) value).floatValue());
+        break;
+      case "zoomClosePageFadeMs":
+        mViewManager.setZoomClosePageFadeMs(view, value == null ? 0f : ((Double) value).floatValue());
+        break;
+      case "zoomCommitRevealMs":
+        mViewManager.setZoomCommitRevealMs(view, value == null ? 0f : ((Double) value).floatValue());
+        break;
+      case "zoomCancelSpringMs":
+        mViewManager.setZoomCancelSpringMs(view, value == null ? 0f : ((Double) value).floatValue());
+        break;
+      case "zoomShowDebugBorders":
+        mViewManager.setZoomShowDebugBorders(view, value == null ? false : (boolean) value);
+        break;
       case "stackPresentation":
         mViewManager.setStackPresentation(view, (String) value);
         break;

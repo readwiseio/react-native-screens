@@ -413,6 +413,36 @@ open class ScreenViewManager :
         value: String?,
     ) = Unit
 
+    override fun setZoomCloseFlightDelayMs(
+        view: Screen?,
+        value: Float,
+    ) = Unit
+
+    override fun setZoomCloseRevealMs(
+        view: Screen?,
+        value: Float,
+    ) = Unit
+
+    override fun setZoomClosePageFadeMs(
+        view: Screen?,
+        value: Float,
+    ) = Unit
+
+    override fun setZoomCommitRevealMs(
+        view: Screen?,
+        value: Float,
+    ) = Unit
+
+    override fun setZoomCancelSpringMs(
+        view: Screen?,
+        value: Float,
+    ) = Unit
+
+    override fun setZoomShowDebugBorders(
+        view: Screen?,
+        value: Boolean,
+    ) = Unit
+
     override fun setScreenId(
         view: Screen,
         value: String?,

@@ -189,6 +189,8 @@ export type NativeStackNavigationOptions = {
     zoomSourceCornerRadius?: ScreenProps['zoomSourceCornerRadius'];
     /**
      * Readwise: when true, the zoom dismiss pan only starts from the left-edge strip.
+     * The interactive zoom dismiss requires `fullScreenSwipeEnabled` +
+     * `customAnimationOnSwipe` on the same screen.
      *
      * @platform ios
      */
@@ -200,6 +202,28 @@ export type NativeStackNavigationOptions = {
      * @platform ios
      */
     zoomSourceViewNativeID?: ScreenProps['zoomSourceViewNativeID'];
+    /**
+     * Readwise: zoom timing overrides in ms (non-positive = built-in default). The
+     * open/close flight duration itself comes from `transitionDuration`. See types.tsx
+     * for each knob's meaning.
+     *
+     * @platform ios
+     */
+    zoomCloseFlightDelayMs?: ScreenProps['zoomCloseFlightDelayMs'];
+    /** Readwise: see `zoomCloseFlightDelayMs`. @platform ios */
+    zoomCloseRevealMs?: ScreenProps['zoomCloseRevealMs'];
+    /** Readwise: see `zoomCloseFlightDelayMs`. @platform ios */
+    zoomClosePageFadeMs?: ScreenProps['zoomClosePageFadeMs'];
+    /** Readwise: see `zoomCloseFlightDelayMs`. @platform ios */
+    zoomCommitRevealMs?: ScreenProps['zoomCommitRevealMs'];
+    /** Readwise: see `zoomCloseFlightDelayMs`. @platform ios */
+    zoomCancelSpringMs?: ScreenProps['zoomCancelSpringMs'];
+    /**
+     * Readwise: paints the zoom debug borders for this screen's transitions at runtime.
+     *
+     * @platform ios
+     */
+    zoomShowDebugBorders?: ScreenProps['zoomShowDebugBorders'];
     /**
      * Title to display in the back button.
      * Only supported on iOS.

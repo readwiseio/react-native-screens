@@ -1125,7 +1125,9 @@ RNS_IGNORE_SUPER_CALL_END
 
 // Interactive dismiss for the zoom animation. The pan drives the screen pose manually
 // through the zoom animator (finger-follow + eased shrink, the JS dismissDrag port);
-// the interaction controller only scrubs the dimming carrier + UIKit progress.
+// the interaction controller only scrubs the invisible progress carrier (UIKit
+// progress); the dim deliberately holds its resting alpha until the commit flight /
+// cancel spring (scrubbing it made the release visibly snap).
 // While the book loads the drag works from anywhere in any direction; once loaded
 // (zoomDismissEdgeOnly) only a rightward pull from the left-edge strip starts it
 // (gated in gestureRecognizerShouldBegin) and progress tracks the horizontal pull.
@@ -1137,6 +1139,8 @@ RNS_IGNORE_SUPER_CALL_END
   static const float RNSZoomCommitVelocity = 700.f;
   // JS dismissDrag: full drag progress spans 92% of the screen width.
   static const float RNSZoomProgressSpanFraction = 0.92f;
+  // fractionComplete == 1 would complete the carrier animator mid-gesture; cap just under.
+  static const float RNSZoomMaxScrubProgress = 0.99f;
 
   CGPoint translation = [gestureRecognizer translationInView:gestureRecognizer.view];
   CGPoint velocity = [gestureRecognizer velocityInView:gestureRecognizer.view];
@@ -1149,7 +1153,7 @@ RNS_IGNORE_SUPER_CALL_END
   float dragVelocity = edgeOnly ? (float)velocity.x : (float)hypot(velocity.x, velocity.y);
   float commitDistance = edgeOnly ? RNSZoomEdgeCommitDistance : RNSZoomCommitDistance;
   float progressDistance = MAX((float)gestureRecognizer.view.bounds.size.width * RNSZoomProgressSpanFraction, 1.f);
-  float transitionProgress = MIN(dragDistance / progressDistance, 0.99f);
+  float transitionProgress = MIN(dragDistance / progressDistance, RNSZoomMaxScrubProgress);
 
   RNSScreenStackAnimator *animationController = _interactionController.animationController;
 

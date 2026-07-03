@@ -4,3 +4,7 @@
 # Readwise: lib/ is committed build output (git-dependency installs skip prepare);
 # collapse it in PR diffs.
 lib/** linguist-generated=true
+
+# Readwise: package.json's prepare is `bob build` (husky removed) — prepare runs on
+# git-dependency installs, where husky is absent (devDependency) and hooks are
+# pointless. Fork contributors wanting hooks run `husky install` manually.

@@ -1097,10 +1097,12 @@ RNS_IGNORE_SUPER_CALL_END
     // window (not UIScreen.mainScreen — wrong under Split View / Stage Manager), with a
     // mainScreen fallback for prop updates that land before the view is in a window.
     // Guard each setter so redundant assignments don't trigger re-layout, and reset
-    // when the props return to 0 so stale size/inset state doesn't linger. NOTE:
-    // this method runs on prop commits only — a rotation with an active sheetMaxWidth
-    // keeps the height computed from the pre-rotation window until the next commit
-    // re-enters here.
+    // the SIZING state (page sizing, edge-attach, preferredContentSize, insets) when
+    // the props return to 0 — the general formSheet machinery applied above to a
+    // customized pageSheet (delegate, detents, grabber, corner radius) is not unwound.
+    // NOTE: this method runs on prop commits only — a rotation with an active
+    // sheetMaxWidth keeps the height computed from the pre-rotation window until the
+    // next commit re-enters here.
     const CGRect windowBounds = self.window != nil ? self.window.bounds : UIScreen.mainScreen.bounds;
     if (_sheetMaxWidth > 0 && windowBounds.size.width > _sheetMaxWidth) {
       // Capture the pre-force values once so the reset branch restores what the sheet

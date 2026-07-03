@@ -122,6 +122,9 @@ export interface ScreenProps extends ViewProps {
     /**
      * Readwise: when true, the zoom dismiss pan only starts from the left-edge strip with a
      * rightward pull; when false (default) it starts anywhere, in any direction.
+     * NOTE: the interactive zoom dismiss requires `fullScreenSwipeEnabled` and
+     * `customAnimationOnSwipe` on the same screen — without them the pan never receives
+     * touches / routes to the default slide animator.
      *
      * @platform ios
      */
@@ -134,6 +137,50 @@ export interface ScreenProps extends ViewProps {
      * @platform ios
      */
     zoomSourceViewNativeID?: string;
+    /**
+     * Readwise: delay (ms) before the close flight starts moving, while the stand-in
+     * materialises in place. Non-positive keeps the built-in default (175ms). The
+     * open/close flight duration itself comes from `transitionDuration`.
+     *
+     * @platform ios
+     */
+    zoomCloseFlightDelayMs?: number;
+    /**
+     * Readwise: duration (ms) of the stand-in's fade-in at the start of the
+     * non-interactive close flight. Non-positive keeps the default (200ms).
+     *
+     * @platform ios
+     */
+    zoomCloseRevealMs?: number;
+    /**
+     * Readwise: duration (ms) of the page's fade-out during the close flights.
+     * Non-positive keeps the default (300ms).
+     *
+     * @platform ios
+     */
+    zoomClosePageFadeMs?: number;
+    /**
+     * Readwise: duration (ms) of the stand-in's fade-in when a dismiss drag commits.
+     * Non-positive keeps the default (150ms).
+     *
+     * @platform ios
+     */
+    zoomCommitRevealMs?: number;
+    /**
+     * Readwise: duration (ms) of the spring that returns the page when a dismiss drag
+     * is cancelled. Non-positive keeps the default (360ms).
+     *
+     * @platform ios
+     */
+    zoomCancelSpringMs?: number;
+    /**
+     * Readwise: paints the zoom debug borders (red = flying stand-in, blue = real card)
+     * for this screen's transitions — the runtime switch for what RNSZoomDebugEnabled
+     * gates at compile time. Defaults to false.
+     *
+     * @platform ios
+     */
+    zoomShowDebugBorders?: boolean;
     /**
      * Whether the home indicator should be hidden on this screen. Defaults to `false`.
      *

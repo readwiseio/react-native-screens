@@ -101,6 +101,16 @@ namespace react = facebook::react;
 // Fabric owns it) and hands visibility off atomically at both ends, so the landing
 // is seamless by construction.
 @property (nonatomic, copy, nullable) NSString *zoomSourceViewNativeID;
+// Zoom timing overrides in milliseconds; non-positive means "use the built-in
+// default". The open/close flight duration itself comes from `transitionDuration`.
+@property (nonatomic) CGFloat zoomCloseFlightDelayMs;
+@property (nonatomic) CGFloat zoomCloseRevealMs;
+@property (nonatomic) CGFloat zoomClosePageFadeMs;
+@property (nonatomic) CGFloat zoomCommitRevealMs;
+@property (nonatomic) CGFloat zoomCancelSpringMs;
+// Paints the zoom debug borders (red = flying stand-in, blue = real card) for this
+// screen's transitions at runtime — no rebuild needed, unlike RNSZoomDebugEnabled.
+@property (nonatomic) BOOL zoomShowDebugBorders;
 @property (nonatomic) int activityState;
 @property (nonatomic, nullable) NSString *screenId;
 @property (weak, nonatomic) UIView<RNSScreenContainerDelegate> *reactSuperview;

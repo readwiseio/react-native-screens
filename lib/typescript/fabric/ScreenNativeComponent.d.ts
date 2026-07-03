@@ -72,6 +72,12 @@ export interface NativeProps extends ViewProps {
     zoomSourceCornerRadius?: WithDefault<Float, 0.0>;
     zoomDismissEdgeOnly?: WithDefault<boolean, false>;
     zoomSourceViewNativeID?: string;
+    zoomCloseFlightDelayMs?: WithDefault<Float, 0.0>;
+    zoomCloseRevealMs?: WithDefault<Float, 0.0>;
+    zoomClosePageFadeMs?: WithDefault<Float, 0.0>;
+    zoomCommitRevealMs?: WithDefault<Float, 0.0>;
+    zoomCancelSpringMs?: WithDefault<Float, 0.0>;
+    zoomShowDebugBorders?: WithDefault<boolean, false>;
     stackPresentation?: WithDefault<StackPresentation, 'push'>;
     stackAnimation?: WithDefault<StackAnimation, 'default'>;
     transitionDuration?: WithDefault<Int32, 500>;

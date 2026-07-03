@@ -32,8 +32,11 @@ static constexpr float RNSZoomDimMaxAlpha = 0.35;
 
 // Faithful ports of the JS cover-zoom constants (bookwise coverZoom.tsx / dismissDrag.ts).
 static constexpr CGFloat RNSZoomArc = 0.45;
-static constexpr CGFloat RNSZoomArcLeadExp = 1 + RNSZoomArc; // Y leads the flight
-static constexpr CGFloat RNSZoomArcTrailExp = 1 / (1 + RNSZoomArc); // X trails
+// Names mirror the JS ARC_LEAD_EXP/ARC_TRAIL_EXP for port fidelity. Y leads the OPEN
+// flight; on the close the same arc runs in reverse, so X leads (see
+// RNSZoomArcLerpTransform).
+static constexpr CGFloat RNSZoomArcLeadExp = 1 + RNSZoomArc;
+static constexpr CGFloat RNSZoomArcTrailExp = 1 / (1 + RNSZoomArc);
 static constexpr CGFloat RNSZoomCloseOvershoot = 1.1;
 static constexpr CGFloat RNSZoomInteractiveMinScale = 0.55;
 static constexpr CGFloat RNSZoomDragTranslateFactor = 0.3;
@@ -42,6 +45,10 @@ static constexpr CGFloat RNSZoomDeviceCornerRadius = 52;
 static constexpr NSTimeInterval RNSZoomCancelSpringDuration = 0.36;
 static constexpr CGFloat RNSZoomCancelSpringDamping = 0.82;
 static constexpr int RNSZoomKeyframeCount = 24;
+// The push backdrop (the page, behind the flying stand-in) reaches full opacity at
+// this fraction of the eased progress. Ported from the legacy JS overlay's
+// [0, 0.85] progress interpolation (the overlay file was deleted with the JS flight).
+static constexpr CGFloat RNSZoomOpenBackdropFullAt = 0.85;
 
 // Ease-out cubic: 1 - (1-t)^3. Ports both JS curves that shared this math —
 // Easing.out(Easing.cubic) (the open flight) and easeOutDrag (the dismiss shrink).
@@ -125,7 +132,7 @@ typedef struct {
   CGRect alignmentRect;
   CGRect viewBounds;
   CGFloat maskSourceCornerRadius;
-} RNSZoomGeometry;
+} RNSZoomScreenGeometry;
 
 static CGRect RNSZoomLerpRect(CGRect from, CGRect to, CGFloat t)
 {
@@ -136,11 +143,19 @@ static CGRect RNSZoomLerpRect(CGRect from, CGRect to, CGFloat t)
       RNSZoomLerp(from.size.height, to.size.height, t));
 }
 
-// JS timing constants for the close (coverZoom.tsx).
+// Default close timings (originally the JS cover-zoom constants). Each is overridable
+// per screen via the zoom*Ms props (see RNSZoomDuration); the open/close flight
+// duration itself comes from the transitionDuration prop.
 static constexpr NSTimeInterval RNSZoomCloseRevealDuration = 0.2; // CLOSE_REVEAL_MS
 static constexpr NSTimeInterval RNSZoomCloseFlightDelay = 0.175; // CLOSE_FLIGHT_DELAY_MS
 static constexpr NSTimeInterval RNSZoomClosePageFadeDuration = 0.3; // COVER_ZOOM_CLOSE_FADE_MS
 static constexpr NSTimeInterval RNSZoomCommitRevealDuration = 0.15; // cover materialise on drag commit
+
+// Per-screen timing override: the prop carries milliseconds; non-positive keeps the default.
+static inline NSTimeInterval RNSZoomDuration(CGFloat overrideMs, NSTimeInterval fallback)
+{
+  return overrideMs > 0 ? overrideMs / 1000.0 : fallback;
+}
 
 // Geometry for the card flight: a snapshot stand-in of the cover (the real card is
 // never reparented — Fabric owns it; see zoomMakeStandInFromCardView) flies between
@@ -243,6 +258,9 @@ static void RNSZoomCollectViewsByNativeID(UIView *root, NSString *nativeID, int 
 // ===== RNSZOOM DEBUG SWITCH (set NO / 1.0 before shipping) =====
 // Borders: red = flying stand-in, blue = real shelf card; the reader loading cover's
 // green border lives in JS (bookwise ReaderZoomLoadingCover, COVER_ZOOM_DEBUG).
+// The borders (only) are also available at runtime via the screen's
+// zoomShowDebugBorders prop — no rebuild needed; this compile switch additionally
+// gates the entry NSLogs and the slow-motion container speed below.
 static const BOOL RNSZoomDebugEnabled = NO;
 static const NSInteger RNSZoomDebugCardBorderTag = 987654;
 // 1.0 = real speed; 0.1 = 10x slow motion. NOTE: slow motion distorts the property
@@ -299,9 +317,9 @@ static void RNSZoomRemoveOpacityRamp(UIView *_Nullable view)
 // Presentation-side page fade shared by the close flights: the page fades out over
 // COVER_ZOOM_CLOSE_FADE within `duration`, and Fabric commits mid-close can't
 // restore it (see RNSZoomAddOpacityRamp).
-static void RNSZoomAddPageFadeRamp(UIView *view, NSTimeInterval duration)
+static void RNSZoomAddPageFadeRamp(UIView *view, NSTimeInterval duration, NSTimeInterval fadeDuration)
 {
-  const CGFloat pageFadeFraction = MIN(RNSZoomClosePageFadeDuration / MAX(duration, 0.01), 1.0);
+  const CGFloat pageFadeFraction = MIN(fadeDuration / MAX(duration, 0.01), 1.0);
   RNSZoomAddOpacityRamp(view, duration, ^CGFloat(CGFloat t) {
     return MAX(1.0 - t / pageFadeFraction, 0.0);
   });
@@ -320,7 +338,7 @@ static void RNSZoomAddPageFadeRamp(UIView *view, NSTimeInterval duration)
   // layer.mask from a view it doesn't retain, so the getter can return a freed object.
   CALayer *_Nullable _zoomMaskLayer;
   __weak UIView *_zoomDimmingView;
-  RNSZoomGeometry _zoomGeometry;
+  RNSZoomScreenGeometry _zoomScreenGeometry;
   // Card flight state (snapshot stand-in).
   RNSZoomCardGeometry _zoomCardGeometry;
   __weak UIView *_zoomCardView;
@@ -332,6 +350,8 @@ static void RNSZoomAddPageFadeRamp(UIView *view, NSTimeInterval duration)
   // The view currently carrying a zoom opacity ramp, for the defensive release in
   // animationEnded:.
   __weak UIView *_zoomRampedView;
+  // Container layer slowed by the debug switch; speed restored in animationEnded:.
+  __weak CALayer *_zoomSlowedLayer;
   // Destination cover inside the pushed reader screen: hidden during the open flight
   // (the flying card is the only visible cover) and revealed atomically at landing.
   __weak UIView *_zoomDestCoverView;
@@ -437,6 +457,8 @@ static void RNSZoomAddPageFadeRamp(UIView *view, NSTimeInterval duration)
   [self zoomFinishCardFlightSettingCardAlpha:pushCompleted ? 0.0 : 1.0];
   RNSZoomRemoveOpacityRamp(_zoomRampedView);
   _zoomRampedView = nil;
+  _zoomSlowedLayer.speed = 1.0;
+  _zoomSlowedLayer = nil;
   // Same backstop for the drag state the interactive carrier normally cleans up:
   // an abnormally ended drag must not leave the drag mask or transform behind.
   if (_isZoomInteractive) {
@@ -802,7 +824,7 @@ static void RNSZoomAddPageFadeRamp(UIView *view, NSTimeInterval duration)
                    maskView:(UIView *)maskView
                 dimmingView:(UIView *)dimmingView
 {
-  const RNSZoomGeometry g = _zoomGeometry;
+  const RNSZoomScreenGeometry g = _zoomScreenGeometry;
   const RNSZoomPose shelfPose = {g.shelfScale, g.shelfTX, g.shelfTY};
   animatedView.transform = RNSZoomArcLerpTransform(RNSZoomIdentityPose, shelfPose, at);
   maskView.frame = RNSZoomLerpRect(g.viewBounds, g.alignmentRect, at);
@@ -956,7 +978,7 @@ static void RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
     }
 
     standIn = [[UIImageView alloc] initWithImage:cardImage];
-    if (RNSZoomDebugEnabled) {
+    if (RNSZoomDebugEnabled || self->_animatedScreen.zoomShowDebugBorders) {
       UIView *debugFlyingPaint = [[UIView alloc] initWithFrame:standIn.bounds];
       debugFlyingPaint.layer.borderColor = UIColor.redColor.CGColor;
       debugFlyingPaint.layer.borderWidth = 6;
@@ -1054,6 +1076,8 @@ static void RNSZoomCompleteTransition(
   UIView *container = transitionContext.containerView;
   if (RNSZoomDebugEnabled && RNSZoomDebugAnimationSpeed != 1.0f) {
     container.layer.speed = RNSZoomDebugAnimationSpeed;
+    // Restored in animationEnded: — the container outlives the transition.
+    _zoomSlowedLayer = container.layer;
   }
   CGRect sourceRectInWindow = RNSZoomRectFromDictionary(screen.zoomSourceRect);
   CGRect alignmentRect = RNSZoomRectFromDictionary(screen.zoomAlignmentRect);
@@ -1075,7 +1099,7 @@ static void RNSZoomCompleteTransition(
 
   // getShelfFlightGeometry: centre-to-centre deltas put the alignment rect (scaled
   // about the view centre) exactly onto the source rect. (Screen-zoom fallback.)
-  RNSZoomGeometry geometry;
+  RNSZoomScreenGeometry geometry;
   geometry.shelfScale = scale;
   geometry.shelfTX = CGRectGetMidX(sourceRect) - CGRectGetMidX(viewFrame) -
       scale * (CGRectGetMidX(alignmentRect) - CGRectGetMidX(viewBounds));
@@ -1086,7 +1110,7 @@ static void RNSZoomCompleteTransition(
   // Mask radius lives in unscaled view coordinates, so pre-divide by scale to read
   // as the source view's radius on screen.
   geometry.maskSourceCornerRadius = scale > 0 ? screen.zoomSourceCornerRadius / scale : 0;
-  _zoomGeometry = geometry;
+  _zoomScreenGeometry = geometry;
 
   // The card flight needs the real card view; fall back to the screen zoom without it.
   UIView *cardView = nil;
@@ -1157,8 +1181,8 @@ static void RNSZoomCompleteTransition(
     RNSZoomHoldOpacity(cardView, 0);
     RNSZoomHoldOpacity(destCover, 0);
     RNSZoomAddOpacityRamp(animatedView, duration, ^CGFloat(CGFloat t) {
-      // Backdrop ramp: JS interpolated progress [0, 0.85] -> opacity [0, 1].
-      return MIN(RNSZoomEaseOutCubic(t) / 0.85, 1.0);
+      // Backdrop (the page, behind the flying stand-in) fade-in ramp.
+      return MIN(RNSZoomEaseOutCubic(t) / RNSZoomOpenBackdropFullAt, 1.0);
     });
     _zoomRampedView = animatedView;
 
@@ -1292,8 +1316,11 @@ static void RNSZoomCompleteTransition(
     return;
   }
 
-  const NSTimeInterval totalDuration = duration + RNSZoomCloseFlightDelay;
-  const CGFloat delayFraction = RNSZoomCloseFlightDelay / totalDuration;
+  RNSScreenView *screenForTiming = _animatedScreen;
+  const NSTimeInterval closeFlightDelay =
+      RNSZoomDuration(screenForTiming.zoomCloseFlightDelayMs, RNSZoomCloseFlightDelay);
+  const NSTimeInterval totalDuration = duration + closeFlightDelay;
+  const CGFloat delayFraction = closeFlightDelay / totalDuration;
 
   // Mid-load closes still have the reader's cover mounted: render it into the
   // stand-in so the close flight starts sharp too.
@@ -1308,13 +1335,19 @@ static void RNSZoomCompleteTransition(
     // snapshot stand-in materialises at the reader pose (CLOSE_REVEAL over the flight
     // delay) and flies home with the overshoot arc. Landing restores the real card's
     // alpha in the same transaction that removes the stand-in — seamless.
+    // Re-hold the card at 0 for the flight: Fabric may have remounted/recycled it since
+    // push time (resetting its model alpha to the JS value), which would show the real
+    // card under the flying stand-in. Released in finishCardFlight's handoff.
+    RNSZoomHoldOpacity(cardView, 0);
     [UIView performWithoutAnimation:^{
       standIn.transform = [self zoomCardTransformForAt:0];
       standIn.alpha = 0.0;
     }];
 
-    const CGFloat revealFraction = MIN(RNSZoomCloseRevealDuration / totalDuration, 1.0);
-    RNSZoomAddPageFadeRamp(animatedView, totalDuration);
+    const CGFloat revealFraction =
+        MIN(RNSZoomDuration(screenForTiming.zoomCloseRevealMs, RNSZoomCloseRevealDuration) / totalDuration, 1.0);
+    RNSZoomAddPageFadeRamp(
+        animatedView, totalDuration, RNSZoomDuration(screenForTiming.zoomClosePageFadeMs, RNSZoomClosePageFadeDuration));
     _zoomRampedView = animatedView;
 
     UIViewPropertyAnimator *animator = [[UIViewPropertyAnimator alloc] initWithDuration:totalDuration
@@ -1379,8 +1412,10 @@ static void RNSZoomCompleteTransition(
 - (CGFloat)zoomCancelDurationScale
 {
   // Scale a cancelled carrier's completion to match the cancel spring
-  // (RNSZoomCancelSpringDuration).
-  return _transitionDuration > 0 ? RNSZoomCancelSpringDuration / _transitionDuration : 1;
+  // (RNSZoomCancelSpringDuration, or the screen's zoomCancelSpringMs override).
+  const NSTimeInterval springDuration =
+      RNSZoomDuration(_animatedScreen.zoomCancelSpringMs, RNSZoomCancelSpringDuration);
+  return _transitionDuration > 0 ? springDuration / _transitionDuration : 1;
 }
 
 // dismissTransform + dismissCornerRadius: finger-follow translation with the eased
@@ -1470,13 +1505,18 @@ static void RNSZoomCompleteTransition(
         pageScale, embeddedMidX - CGRectGetMidX(g.alignmentRect), embeddedMidY - CGRectGetMidY(g.alignmentRect)};
     // Slot pose (flight target) — the same target zoomCardTransformForAt lands on.
     const RNSZoomPose slot = RNSZoomSlotPoseForGeometry(g);
+    // Re-hold the re-found card at 0 for the flight (same rationale as the
+    // non-interactive close: a Fabric remount since push resets its model alpha).
+    RNSZoomHoldOpacity(cardView, 0);
     [UIView performWithoutAnimation:^{
       standIn.alpha = 0.0;
       standIn.transform = RNSZoomArcLerpTransform(releasePose, slot, 0);
     }];
 
-    const CGFloat revealFraction = MIN(RNSZoomCommitRevealDuration / MAX(_transitionDuration, 0.01), 1.0);
-    RNSZoomAddPageFadeRamp(animatedView, _transitionDuration);
+    const CGFloat revealFraction = MIN(
+        RNSZoomDuration(screen.zoomCommitRevealMs, RNSZoomCommitRevealDuration) / MAX(_transitionDuration, 0.01), 1.0);
+    RNSZoomAddPageFadeRamp(
+        animatedView, _transitionDuration, RNSZoomDuration(screen.zoomClosePageFadeMs, RNSZoomClosePageFadeDuration));
     _zoomRampedView = animatedView;
 
     UIViewPropertyAnimator *flight = [[UIViewPropertyAnimator alloc] initWithDuration:_transitionDuration
@@ -1495,7 +1535,7 @@ static void RNSZoomCompleteTransition(
 
   // Fallback: fly the page home from the release pose (closeInteractiveStyle). The
   // drag mask layer keeps the release corners; only the transform animates.
-  const RNSZoomGeometry g = _zoomGeometry;
+  const RNSZoomScreenGeometry g = _zoomScreenGeometry;
   const RNSZoomPose releasePose = {pageScale, dragTX, dragTY};
   const RNSZoomPose shelfPose = {g.shelfScale, g.shelfTX, g.shelfTY};
 
@@ -1520,7 +1560,9 @@ static void RNSZoomCompleteTransition(
   if (animatedView == nil) {
     return;
   }
-  [UIView animateWithDuration:RNSZoomCancelSpringDuration
+  const NSTimeInterval springDuration =
+      RNSZoomDuration(_animatedScreen.zoomCancelSpringMs, RNSZoomCancelSpringDuration);
+  [UIView animateWithDuration:springDuration
                         delay:0
        usingSpringWithDamping:RNSZoomCancelSpringDamping
         initialSpringVelocity:0
@@ -1533,7 +1575,7 @@ static void RNSZoomCompleteTransition(
     CABasicAnimation *radiusAnimation = [CABasicAnimation animationWithKeyPath:@"cornerRadius"];
     radiusAnimation.fromValue = @(maskLayer.presentationLayer.cornerRadius);
     radiusAnimation.toValue = @(RNSZoomBaseReaderRadius);
-    radiusAnimation.duration = RNSZoomCancelSpringDuration;
+    radiusAnimation.duration = springDuration;
     radiusAnimation.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut];
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
