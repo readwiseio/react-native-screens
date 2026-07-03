@@ -74,6 +74,11 @@ struct ContentWrapperBox {
   // YES once the fork's pageSheet sizing props were applied, so the method re-enters
   // to reset them when they return to 0 (the gate below would otherwise skip it).
   bool _sheetDidCustomizePageSheet;
+  // Pre-force sheet sizing state, so the reset restores what the sheet actually had
+  // (prefersPageSizing's default is OS-dependent).
+  bool _sheetDidForceCustomSizing;
+  bool _sheetPageSizingBeforeForce;
+  bool _sheetEdgeAttachedBeforeForce;
 #ifdef RCT_NEW_ARCH_ENABLED
   RCTSurfaceTouchHandler *_touchHandler;
   react::RNSScreenShadowNode::ConcreteState::Shared _state;
@@ -1092,6 +1097,16 @@ RNS_IGNORE_SUPER_CALL_END
     // cap) so stale size/inset state doesn't linger on the controller.
     const CGRect windowBounds = self.window != nil ? self.window.bounds : UIScreen.mainScreen.bounds;
     if (_sheetMaxWidth > 0 && windowBounds.size.width > _sheetMaxWidth) {
+      // Capture the pre-force values once so the reset branch restores what the sheet
+      // actually had — prefersPageSizing's default differs by OS (NO on iOS 18+, YES
+      // before), so asserting an assumed default would change stock sheets.
+      if (!_sheetDidForceCustomSizing) {
+        _sheetDidForceCustomSizing = true;
+        if (@available(iOS 17.0, *)) {
+          _sheetPageSizingBeforeForce = sheet.prefersPageSizing;
+        }
+        _sheetEdgeAttachedBeforeForce = sheet.prefersEdgeAttachedInCompactHeight;
+      }
       if (@available(iOS 17.0, *)) {
         if (sheet.prefersPageSizing != NO) {
           sheet.prefersPageSizing = NO;
@@ -1114,19 +1129,23 @@ RNS_IGNORE_SUPER_CALL_END
         sheet.prefersEdgeAttachedInCompactHeight = YES;
       }
     } else {
-      if (@available(iOS 17.0, *)) {
-        if (sheet.prefersPageSizing != YES) {
-          sheet.prefersPageSizing = YES;
+      // Restore only what the active branch forced; never touch a stock sheet.
+      if (_sheetDidForceCustomSizing) {
+        _sheetDidForceCustomSizing = false;
+        if (@available(iOS 17.0, *)) {
+          if (sheet.prefersPageSizing != _sheetPageSizingBeforeForce) {
+            sheet.prefersPageSizing = _sheetPageSizingBeforeForce;
+          }
+        }
+        if (sheet.prefersEdgeAttachedInCompactHeight != _sheetEdgeAttachedBeforeForce) {
+          sheet.prefersEdgeAttachedInCompactHeight = _sheetEdgeAttachedBeforeForce;
+        }
+        if (sheet.widthFollowsPreferredContentSizeWhenEdgeAttached != NO) {
+          sheet.widthFollowsPreferredContentSizeWhenEdgeAttached = NO;
         }
       }
       if (!CGSizeEqualToSize(_controller.preferredContentSize, CGSizeZero)) {
         _controller.preferredContentSize = CGSizeZero;
-      }
-      if (sheet.widthFollowsPreferredContentSizeWhenEdgeAttached != NO) {
-        sheet.widthFollowsPreferredContentSizeWhenEdgeAttached = NO;
-      }
-      if (sheet.prefersEdgeAttachedInCompactHeight != NO) {
-        sheet.prefersEdgeAttachedInCompactHeight = NO;
       }
     }
 

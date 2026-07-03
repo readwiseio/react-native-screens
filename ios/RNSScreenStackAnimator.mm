@@ -143,7 +143,7 @@ static constexpr NSTimeInterval RNSZoomClosePageFadeDuration = 0.3; // COVER_ZOO
 static constexpr NSTimeInterval RNSZoomCommitRevealDuration = 0.15; // cover materialise on drag commit
 
 // Geometry for the card flight: a snapshot stand-in of the cover (the real card is
-// never reparented — Fabric owns it; see zoomMakeFlyingCardFromView) flies between
+// never reparented — Fabric owns it; see zoomMakeStandInFromCardView) flies between
 // the slot rect and the alignment rect.
 typedef struct {
   CGRect slotRect; // the card's slot on the shelf (zoomSourceRect prop) in container coordinates
@@ -326,7 +326,7 @@ static void RNSZoomAddPageFadeRamp(UIView *view, NSTimeInterval duration)
   __weak UIView *_zoomBelowView;
   // The flying stand-in is a native snapshot we own — Fabric can recycle the real
   // card mid-flight without breaking the animation.
-  UIView *_Nullable _zoomFlyingCardView;
+  UIView *_Nullable _zoomStandInView;
   // The view currently carrying a zoom opacity ramp, for the defensive release in
   // animationEnded:.
   __weak UIView *_zoomRampedView;
@@ -428,8 +428,11 @@ static void RNSZoomAddPageFadeRamp(UIView *view, NSTimeInterval duration)
   // animator completion, the presentation-layer holds would pin the shelf card and
   // dest cover invisible indefinitely — and Fabric can't repair them (the model is
   // already 1, so its writes are no-ops). Both calls are no-ops on the normal path,
-  // where the completion already ran before completeTransition.
-  [self zoomFinishCardFlightSettingCardAlpha:1.0];
+  // where the completion already ran before completeTransition. The card alpha
+  // matches the normal-path contract: session-hidden after a completed push (the
+  // reader shows the identical cover), visible in every other outcome.
+  const BOOL pushCompleted = _operation == UINavigationControllerOperationPush && transitionCompleted;
+  [self zoomFinishCardFlightSettingCardAlpha:pushCompleted ? 0.0 : 1.0];
   RNSZoomRemoveOpacityRamp(_zoomRampedView);
   _zoomRampedView = nil;
   _inFlightAnimator = nil;
@@ -795,7 +798,7 @@ static void RNSZoomAddPageFadeRamp(UIView *view, NSTimeInterval duration)
 // Uniform keyframe scaffold shared by EVERY zoom flight (card flights and masked
 // fallbacks): RNSZoomKeyframeCount equal keyframes sampling `pose(t)` at t in (0..1].
 // When `revealView` is non-nil an extra keyframe fades it to 1 over the first
-// `revealFraction` of the animation (the close flights materialise the card that way).
+// `revealFraction` of the animation (the close flights materialise the stand-in that way).
 // Call inside a UIViewPropertyAnimator's animation block.
 static void RNSZoomAddFlightKeyframes(UIView *_Nullable revealView, CGFloat revealFraction, void (^pose)(CGFloat t))
 {
@@ -871,7 +874,7 @@ static void RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
 // destination cover render on top — the flight shows the same fully-rendered image the
 // reader holds, so scaling up never blurs. The real card is never reparented (Fabric
 // owns it and may recycle it mid-flight); visibility is handed off atomically at the ends.
-- (UIView *_Nullable)zoomMakeFlyingCardFromView:(UIView *)cardView
+- (UIView *_Nullable)zoomMakeStandInFromCardView:(UIView *)cardView
                                       destCover:(UIView *_Nullable)destCover
                                     inContainer:(UIView *)container
 {
@@ -886,7 +889,7 @@ static void RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
   // immune to that: an implicitly-animated frame set makes CA render the stand-in from
   // its pre-frame pose — the card visibly flies in from (0,0) — and an implicitly
   // animated alpha turns the atomic card/stand-in handoff into a crossfade.
-  __block UIView *flyingView = nil;
+  __block UIView *standIn = nil;
   [UIView performWithoutAnimation:^{
     // Badge overlays (and hidden cards) are alpha-juggled for the render only: both
     // writes land in the same tick, so the display never sees them.
@@ -937,14 +940,14 @@ static void RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
       badges[i].alpha = badgeAlphas[i].doubleValue;
     }
 
-    flyingView = [[UIImageView alloc] initWithImage:cardImage];
+    standIn = [[UIImageView alloc] initWithImage:cardImage];
     if (RNSZoomDebugEnabled) {
-      UIView *debugFlyingPaint = [[UIView alloc] initWithFrame:flyingView.bounds];
+      UIView *debugFlyingPaint = [[UIView alloc] initWithFrame:standIn.bounds];
       debugFlyingPaint.layer.borderColor = UIColor.redColor.CGColor;
       debugFlyingPaint.layer.borderWidth = 6;
       debugFlyingPaint.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
       debugFlyingPaint.userInteractionEnabled = NO;
-      [flyingView addSubview:debugFlyingPaint];
+      [standIn addSubview:debugFlyingPaint];
       if ([cardView viewWithTag:RNSZoomDebugCardBorderTag] == nil) {
         UIView *debugCardPaint = [[UIView alloc] initWithFrame:cardView.bounds];
         debugCardPaint.tag = RNSZoomDebugCardBorderTag;
@@ -958,13 +961,13 @@ static void RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
         [cardView addSubview:debugCardPaint];
       }
     }
-    flyingView.frame = alignmentRect;
-    flyingView.userInteractionEnabled = NO;
-    [container addSubview:flyingView];
+    standIn.frame = alignmentRect;
+    standIn.userInteractionEnabled = NO;
+    [container addSubview:standIn];
   }];
-  _zoomFlyingCardView = flyingView;
+  _zoomStandInView = standIn;
   _zoomCardView = cardView;
-  return flyingView;
+  return standIn;
 }
 
 // Atomic handoff at the flight's end: the real card's visibility flips in the same
@@ -973,13 +976,13 @@ static void RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
 // snapshot removal happens.
 - (void)zoomFinishCardFlightSettingCardAlpha:(CGFloat)alpha
 {
-  UIView *flyingView = _zoomFlyingCardView;
+  UIView *standIn = _zoomStandInView;
   UIView *cardView = _zoomCardView;
   UIView *destCover = _zoomDestCoverView;
-  _zoomFlyingCardView = nil;
+  _zoomStandInView = nil;
   _zoomCardView = nil;
   _zoomDestCoverView = nil;
-  if (flyingView == nil && cardView == nil && destCover == nil) {
+  if (standIn == nil && cardView == nil && destCover == nil) {
     return;
   }
   [CATransaction begin];
@@ -990,23 +993,27 @@ static void RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
     RNSZoomReleaseOpacityHold(cardView);
     cardView.alpha = alpha;
   }
-  [flyingView.layer removeAllAnimations];
-  [flyingView removeFromSuperview];
+  [standIn.layer removeAllAnimations];
+  [standIn removeFromSuperview];
   [CATransaction commit];
 }
 
 // Shared tail for every zoom transition: release the card/cover handoff (real card's
 // alpha = cardAlphaOnComplete when completed, its inverse when cancelled), drop the
-// page ramp, restore the page alpha, and complete the UIKit transition.
-- (void)zoomCompleteTransition:(id<UIViewControllerContextTransitioning>)transitionContext
-                  animatedView:(UIView *)animatedView
-                   dimmingView:(UIView *)dimmingView
-           cardAlphaOnComplete:(CGFloat)cardAlphaOnComplete
+// page ramp, restore the page alpha, and complete the UIKit transition. Nil-tolerant:
+// with a deallocated animator (practically unreachable — UIKit retains it for the
+// transition) the handoff no-ops, but the static cleanup still runs so the page can't
+// stay presentation-held at alpha 0.
+static void RNSZoomCompleteTransition(
+    RNSScreenStackAnimator *_Nullable animator,
+    id<UIViewControllerContextTransitioning> transitionContext,
+    UIView *animatedView,
+    UIView *dimmingView,
+    CGFloat cardAlphaOnComplete)
 {
   const BOOL completed = ![transitionContext transitionWasCancelled];
-  [self zoomFinishCardFlightSettingCardAlpha:completed ? cardAlphaOnComplete : 1.0 - cardAlphaOnComplete];
+  [animator zoomFinishCardFlightSettingCardAlpha:completed ? cardAlphaOnComplete : 1.0 - cardAlphaOnComplete];
   RNSZoomRemoveOpacityRamp(animatedView);
-  _zoomRampedView = nil;
   animatedView.alpha = 1.0;
   [dimmingView removeFromSuperview];
   [transitionContext completeTransition:completed];
@@ -1115,7 +1122,7 @@ static void RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
   UIView *standIn = nil;
   if (cardView != nil) {
     destCover = RNSZoomFindViewByNativeID(animatedView, RNSZoomDestCoverNativeID, 0);
-    standIn = [self zoomMakeFlyingCardFromView:cardView destCover:destCover inContainer:container];
+    standIn = [self zoomMakeStandInFromCardView:cardView destCover:destCover inContainer:container];
   }
 
   if (standIn != nil) {
@@ -1152,17 +1159,9 @@ static void RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
       });
     }];
     [animator addCompletion:^(UIViewAnimatingPosition finalPosition) {
-      RNSScreenStackAnimator *strongSelf = weakSelf;
-      if (strongSelf == nil) {
-        [transitionContext completeTransition:![transitionContext transitionWasCancelled]];
-        return;
-      }
       // Completed: card stays session-hidden under the now-opaque reader. Cancelled:
       // it reappears exactly as the stand-in vanishes (same transaction).
-      [strongSelf zoomCompleteTransition:transitionContext
-                            animatedView:animatedView
-                             dimmingView:dimmingView
-                     cardAlphaOnComplete:0.0];
+      RNSZoomCompleteTransition(weakSelf, transitionContext, animatedView, dimmingView, 0.0);
     }];
     _inFlightAnimator = animator;
     [animator startAnimation];
@@ -1257,21 +1256,16 @@ static void RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
                                                                              }];
     [animator addCompletion:^(UIViewAnimatingPosition finalPosition) {
       RNSScreenStackAnimator *strongSelf = weakSelf;
-      if (strongSelf == nil) {
-        [transitionContext completeTransition:![transitionContext transitionWasCancelled]];
-        return;
+      if (strongSelf != nil) {
+        strongSelf->_isZoomInteractive = NO;
+        if (animatedView.layer.mask == strongSelf->_zoomMaskLayer) {
+          animatedView.layer.mask = nil;
+        }
+        strongSelf->_zoomMaskLayer = nil;
       }
-      strongSelf->_isZoomInteractive = NO;
-      if (animatedView.layer.mask == strongSelf->_zoomMaskLayer) {
-        animatedView.layer.mask = nil;
-      }
-      strongSelf->_zoomMaskLayer = nil;
       animatedView.transform = CGAffineTransformIdentity;
       [progressCarrier removeFromSuperview];
-      [strongSelf zoomCompleteTransition:transitionContext
-                            animatedView:animatedView
-                             dimmingView:dimmingView
-                     cardAlphaOnComplete:1.0];
+      RNSZoomCompleteTransition(strongSelf, transitionContext, animatedView, dimmingView, 1.0);
     }];
     [animator setUserInteractionEnabled:YES];
     _inFlightAnimator = animator;
@@ -1286,7 +1280,7 @@ static void RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
   UIView *standIn = nil;
   if (cardView != nil) {
     UIView *destCover = RNSZoomFindViewByNativeID(animatedView, RNSZoomDestCoverNativeID, 0);
-    standIn = [self zoomMakeFlyingCardFromView:cardView destCover:destCover inContainer:container];
+    standIn = [self zoomMakeStandInFromCardView:cardView destCover:destCover inContainer:container];
   }
 
   if (standIn != nil) {
@@ -1314,15 +1308,7 @@ static void RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
       });
     }];
     [animator addCompletion:^(UIViewAnimatingPosition finalPosition) {
-      RNSScreenStackAnimator *strongSelf = weakSelf;
-      if (strongSelf == nil) {
-        [transitionContext completeTransition:![transitionContext transitionWasCancelled]];
-        return;
-      }
-      [strongSelf zoomCompleteTransition:transitionContext
-                            animatedView:animatedView
-                             dimmingView:dimmingView
-                     cardAlphaOnComplete:1.0];
+      RNSZoomCompleteTransition(weakSelf, transitionContext, animatedView, dimmingView, 1.0);
     }];
     _inFlightAnimator = animator;
     [animator startAnimation];
@@ -1447,7 +1433,7 @@ static void RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
   if (cardView != nil && animatedView.window != nil) {
     UIView *container = animatedView.superview;
     UIView *destCover = RNSZoomFindViewByNativeID(animatedView, RNSZoomDestCoverNativeID, 0);
-    standIn = [self zoomMakeFlyingCardFromView:cardView destCover:destCover inContainer:container];
+    standIn = [self zoomMakeStandInFromCardView:cardView destCover:destCover inContainer:container];
   }
   if (standIn != nil) {
     // The cover's embedded pose inside the shrunken, dragged page: the page scales

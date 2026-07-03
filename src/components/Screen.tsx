@@ -5,7 +5,7 @@ import { Animated, View, Platform } from 'react-native';
 
 import TransitionProgressContext from '../TransitionProgressContext';
 import DelayedFreeze from './helpers/DelayedFreeze';
-import { ScreenProps } from '../types';
+import { ScreenProps, ZoomTransitionRectType } from '../types';
 
 import {
   freezeEnabled,
@@ -59,7 +59,7 @@ interface ViewConfig extends View {
 
 // Codegen rect props can't be optional; natively a non-positive width/height means
 // "unset". One helper for both zoom rects so the defaults can't drift apart.
-const normalizeZoomRect = (rect?: ScreenProps['zoomSourceRect']) => ({
+const normalizeZoomRect = (rect?: ZoomTransitionRectType) => ({
   x: rect?.x ?? 0,
   y: rect?.y ?? 0,
   width: rect?.width ?? 0,
