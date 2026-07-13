@@ -357,10 +357,16 @@ class SheetDelegate(
             this@SheetDelegate.onSheetStateChanged(newState)
         }
 
+        // BottomSheetBehavior reports slideOffset +1 (expanded) → 0 (collapsed) → -1 (hidden).
+        // Single-detent sheets rest expanded, so map the open→dismiss span to openness 1→0,
+        // matching the iOS onSheetProgress semantics (1 = settled open, 0 = dismissed).
         override fun onSlide(
             bottomSheet: View,
             slideOffset: Float,
-        ) = Unit
+        ) {
+            val openness = ((slideOffset + 1f) / 2f).coerceIn(0f, 1f)
+            screen.notifySheetProgress(openness)
+        }
     }
 
     companion object {

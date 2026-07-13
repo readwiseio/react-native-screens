@@ -770,6 +770,31 @@ RNS_IGNORE_SUPER_CALL_END
 #endif
 }
 
+// Sheet openness in [0,1] (1 = settled open, 0 = dismissed). Driven each frame by the existing
+// transition-progress display link (see the controller's notifyTransitionProgress), so it covers the
+// open animation, interactive drag, and dismiss. Mirrors notifyTransitionProgress emit plumbing.
+- (void)notifySheetProgress:(double)progress
+{
+#ifdef RCT_NEW_ARCH_ENABLED
+  if (_eventEmitter != nullptr) {
+    std::dynamic_pointer_cast<const react::RNSScreenEventEmitter>(_eventEmitter)
+        ->onSheetProgress(react::RNSScreenEventEmitter::OnSheetProgress{.progress = progress});
+  }
+  RNSScreenViewEvent *event = [[RNSScreenViewEvent alloc] initWithEventName:@"onSheetProgress"
+                                                                   reactTag:[NSNumber numberWithInt:self.tag]
+                                                                   progress:progress
+                                                                    closing:0
+                                                               goingForward:0];
+  [self postNotificationForEventDispatcherObserversWithEvent:event];
+#else
+  if (self.onSheetProgress) {
+    self.onSheetProgress(@{
+      @"progress" : @(progress),
+    });
+  }
+#endif
+}
+
 #if !RCT_NEW_ARCH_ENABLED
 - (void)presentationControllerWillDismiss:(UIPresentationController *)presentationController
 {
@@ -1933,7 +1958,15 @@ Class<RCTComponentViewProtocol> RNSScreenCls(void)
   if ([self.view isKindOfClass:[RNSScreenView class]]) {
     // if the view is already snapshot, there is not sense in sending progress since on JS side
     // the component is already not present
-    [(RNSScreenView *)self.view notifyTransitionProgress:progress closing:closing goingForward:goingForward];
+    RNSScreenView *screenView = (RNSScreenView *)self.view;
+    [screenView notifyTransitionProgress:progress closing:closing goingForward:goingForward];
+    // For sheets, also report openness in [0,1] (1 = settled open). The open transition runs
+    // progress 0→1 (closing NO) and the dismiss runs 0→1 (closing YES), so openness is the same
+    // value on open and its complement on close. Rides the same display link as transition progress.
+    if (screenView.stackPresentation == RNSScreenStackPresentationFormSheet ||
+        screenView.stackPresentation == RNSScreenStackPresentationPageSheet) {
+      [screenView notifySheetProgress:closing ? (1.0 - progress) : progress];
+    }
   }
 }
 
@@ -2263,6 +2296,7 @@ RCT_EXPORT_VIEW_PROPERTY(onWillAppear, RCTDirectEventBlock);
 RCT_EXPORT_VIEW_PROPERTY(onWillDisappear, RCTDirectEventBlock);
 RCT_EXPORT_VIEW_PROPERTY(onGestureCancel, RCTDirectEventBlock);
 RCT_EXPORT_VIEW_PROPERTY(onSheetDetentChanged, RCTDirectEventBlock);
+RCT_EXPORT_VIEW_PROPERTY(onSheetProgress, RCTDirectEventBlock);
 
 #if !TARGET_OS_TV
 RCT_EXPORT_VIEW_PROPERTY(screenOrientation, UIInterfaceOrientationMask)

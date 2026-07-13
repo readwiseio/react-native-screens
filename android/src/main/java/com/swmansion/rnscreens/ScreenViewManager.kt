@@ -22,6 +22,7 @@ import com.swmansion.rnscreens.events.ScreenTransitionProgressEvent
 import com.swmansion.rnscreens.events.ScreenWillAppearEvent
 import com.swmansion.rnscreens.events.ScreenWillDisappearEvent
 import com.swmansion.rnscreens.events.SheetDetentChangedEvent
+import com.swmansion.rnscreens.events.SheetProgressEvent
 
 @ReactModule(name = ScreenViewManager.REACT_CLASS)
 open class ScreenViewManager :
@@ -466,6 +467,7 @@ open class ScreenViewManager :
             HeaderBackButtonClickedEvent.EVENT_NAME to hashMapOf("registrationName" to "onHeaderBackButtonClicked"),
             ScreenTransitionProgressEvent.EVENT_NAME to hashMapOf("registrationName" to "onTransitionProgress"),
             SheetDetentChangedEvent.EVENT_NAME to hashMapOf("registrationName" to "onSheetDetentChanged"),
+            SheetProgressEvent.EVENT_NAME to hashMapOf("registrationName" to "onSheetProgress"),
         )
 
     protected override fun getDelegate(): ViewManagerDelegate<Screen> = delegate

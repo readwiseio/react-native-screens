@@ -155,6 +155,7 @@ namespace react = facebook::react;
 @property (nonatomic, copy) RCTDirectEventBlock onTransitionProgress;
 @property (nonatomic, copy) RCTDirectEventBlock onGestureCancel;
 @property (nonatomic, copy) RCTDirectEventBlock onSheetDetentChanged;
+@property (nonatomic, copy) RCTDirectEventBlock onSheetProgress;
 #endif // RCT_NEW_ARCH_ENABLED
 
 - (void)notifyFinishTransitioning;
@@ -180,6 +181,7 @@ namespace react = facebook::react;
 #endif // RCT_NEW_ARCH_ENABLED
 
 - (void)notifyTransitionProgress:(double)progress closing:(BOOL)closing goingForward:(BOOL)goingForward;
+- (void)notifySheetProgress:(double)progress;
 - (void)notifyDismissCancelledWithDismissCount:(int)dismissCount;
 - (BOOL)isModal;
 - (BOOL)isPresentedAsNativeModal;
