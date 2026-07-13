@@ -3,6 +3,10 @@
 
 We have forked this. Our base branch: `readwise`. The `main` branch must remain clean. Confused? Read https://github.com/readwiseio/rekindled/blob/master/reading-clients/reader/docs/forking-a-dependency.md.
 
+## Building the library
+
+Run `yarn build` to compile the library before committing so the compiled output gets checked into git so we can install the dependency direct from GitHub.
+
 ---
 
 

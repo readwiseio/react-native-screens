@@ -21,6 +21,7 @@
     "lint-swift": "sh scripts/swift-format-helper.sh lint",
     "lint": "yarn lint-js && yarn lint-android && yarn lint-swift",
     "release": "yarn prepare && npm login && release-it",
+    "build": "bob build",
     "prepare_RW_RENAMED_SO_IT_DOESNT_RUN_ON_NPM_INSTALL": "bob build",
     "architectures-consistency-check": "node ./scripts/codegen-check-consistency.js",
     "sync-architectures": "node ./scripts/codegen-sync-archs.js"
