@@ -15,6 +15,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.animation.Animation
 import android.widget.LinearLayout
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.widget.Toolbar
 import androidx.coordinatorlayout.widget.CoordinatorLayout
 import androidx.core.view.ViewCompat
@@ -260,11 +261,30 @@ class ScreenStackFragment :
         return coordinatorLayout
     }
 
+    // Readwise: back presses on a gesture-enabled screen run the same
+    // native-first dismissal as a committed edge swipe (live views slide out,
+    // then notifyTopDetached -> onDismissed -> JS pop), instead of the default
+    // JS-first pop that tears down the WebView mid-animation. Registered on
+    // the androidx dispatcher, so it precedes ReactActivity's callback (LIFO);
+    // anything we can't handle is replayed to the next callback (RN -> JS).
+    private val edgeSwipeBackPressCallback =
+        object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                val stack = screen.container as? ScreenStack
+                if (stack == null || !stack.dismissTopWithEdgeSwipeAnimation()) {
+                    isEnabled = false
+                    activity?.onBackPressedDispatcher?.onBackPressed()
+                    isEnabled = true
+                }
+            }
+        }
+
     override fun onViewCreated(
         view: View,
         savedInstanceState: Bundle?,
     ) {
         super.onViewCreated(view, savedInstanceState)
+        requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, edgeSwipeBackPressCallback)
     }
 
     override fun onCreateAnimation(

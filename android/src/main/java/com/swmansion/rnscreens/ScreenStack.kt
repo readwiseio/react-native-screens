@@ -3,6 +3,7 @@ package com.swmansion.rnscreens
 import android.content.Context
 import android.graphics.Canvas
 import android.os.Build
+import android.view.MotionEvent
 import android.view.View
 import com.facebook.react.bridge.ReactContext
 import com.facebook.react.uimanager.UIManagerHelper
@@ -32,6 +33,24 @@ class ScreenStack(
     private var disappearingTransitioningChildren: MutableList<View> = ArrayList()
 
     var goingForward = false
+
+    // Readwise: native interactive edge-swipe-back (iOS-style). See
+    // EdgeSwipeBackController for the full behavior contract.
+    private val edgeSwipeBackController = EdgeSwipeBackController(this)
+
+    override fun onInterceptTouchEvent(ev: MotionEvent): Boolean =
+        edgeSwipeBackController.onInterceptTouchEvent(ev) || super.onInterceptTouchEvent(ev)
+
+    override fun onTouchEvent(ev: MotionEvent): Boolean =
+        if (edgeSwipeBackController.isInteracting) {
+            edgeSwipeBackController.onTouchEvent(ev)
+        } else {
+            super.onTouchEvent(ev)
+        }
+
+    // Readwise: back-button dismissal through the same native-first path as a
+    // committed edge swipe (ScreenStackFragment's OnBackPressedCallback).
+    internal fun dismissTopWithEdgeSwipeAnimation(): Boolean = edgeSwipeBackController.dismissTopWithAnimation()
 
     /**
      * Marks given fragment as to-be-dismissed and performs updates on container
@@ -118,6 +137,10 @@ class ScreenStack(
         super.hasScreen(screenFragmentWrapper) && !dismissedWrappers.contains(screenFragmentWrapper)
 
     override fun onUpdate() {
+        // Readwise: React is mutating the stack — abort any in-flight edge
+        // swipe so transforms/fragment attachment stay consistent.
+        edgeSwipeBackController.onStackChildrenChanged()
+
         // When going back from a nested stack with a single screen on it, we may hit an edge case
         // when all screens are dismissed and no screen is to be displayed on top. We need to gracefully
         // handle the case of newTop being NULL, which happens in several places below
