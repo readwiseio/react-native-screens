@@ -52,6 +52,29 @@ class ScreenStack(
     // committed edge swipe (ScreenStackFragment's OnBackPressedCallback).
     internal fun dismissTopWithEdgeSwipeAnimation(): Boolean = edgeSwipeBackController.dismissTopWithAnimation()
 
+    // Readwise: the (top, below) pair the edge-swipe/back transition animates.
+    // screenWrappers can carry preloaded (INACTIVE) or dismissed wrappers at its
+    // tail, and attachBelowTop()/detachBelowTop() index that raw list positionally
+    // — so refuse (null) unless the raw tail IS the active pair, in which case
+    // those transactions are guaranteed to act on the screens we animate.
+    internal fun resolveEdgeSwipeScreenPair(): Pair<Screen, Screen>? {
+        val top = topScreen ?: return null
+        val active =
+            screenWrappers.filter {
+                !dismissedWrappers.contains(it) && it.screen.activityState !== Screen.ActivityState.INACTIVE
+            }
+        if (active.size < 2 || screenWrappers.size < 2) {
+            return null
+        }
+        if (active.last().screen !== top ||
+            screenWrappers[screenWrappers.size - 1] !== active[active.size - 1] ||
+            screenWrappers[screenWrappers.size - 2] !== active[active.size - 2]
+        ) {
+            return null
+        }
+        return top to active[active.size - 2].screen
+    }
+
     /**
      * Marks given fragment as to-be-dismissed and performs updates on container
      *

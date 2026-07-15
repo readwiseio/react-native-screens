@@ -8,6 +8,7 @@ import android.view.MotionEvent
 import android.view.VelocityTracker
 import android.view.ViewConfiguration
 import android.view.animation.DecelerateInterpolator
+import com.swmansion.rnscreens.utils.RNSLog
 import kotlin.math.abs
 
 /**
@@ -17,7 +18,7 @@ import kotlin.math.abs
  * Detection: DOWN within the edge band (50dp — master's reader gesture
  * hitSlop) on a screen whose [Screen.isGestureEnabled] is set (native-stack
  * maps androidEdgeSwipeBack/gestureEnabled/beforeRemove into it), activation
- * after 30dp of horizontal-dominant travel.
+ * after a platform-touch-slop pull (~8dp) of horizontal-dominant travel.
  * Tracking: top screen translationX 1:1; screen below parallaxes from
  * -0.3*width to 0 (RNSScreenStackAnimator.mm:542).
  * Commit: translation + 0.3*velocity > width/2 (RNSScreenStack.mm:1139-1140),
@@ -61,20 +62,20 @@ internal class EdgeSwipeBackController(
                 // isGestureEnabled is the arming signal: native-stack maps
                 // androidEdgeSwipeBack + gestureEnabled + beforeRemove into it.
                 val enabled = top?.isGestureEnabled == true
-                val depthOk = stack.fragments.size > 1
+                val pairOk = stack.resolveEdgeSwipeScreenPair() != null
                 val pushOk = top?.stackPresentation == Screen.StackPresentation.PUSH
-                if (enabled && depthOk && pushOk && ev.x <= edgeRegionPx) {
+                if (enabled && pairOk && pushOk && ev.x <= edgeRegionPx) {
                     state = State.ARMED
                     downX = ev.x
                     downY = ev.y
                     velocityTracker?.recycle()
                     velocityTracker = VelocityTracker.obtain()
                     velocityTracker?.addMovement(ev)
-                    Log.d(TAG, "armed at x=${ev.x} (edge=${edgeRegionPx}px)")
+                    RNSLog.d(TAG, "armed at x=${ev.x} (edge=${edgeRegionPx}px)")
                 } else if (ev.x <= edgeRegionPx) {
-                    Log.d(
+                    RNSLog.d(
                         TAG,
-                        "down in band but not armed: enabled=$enabled depth=${stack.fragments.size} push=$pushOk",
+                        "down in band but not armed: enabled=$enabled pair=$pairOk push=$pushOk",
                     )
                 }
             }
@@ -89,16 +90,16 @@ internal class EdgeSwipeBackController(
                         startDrag()
                     } else if (abs(dy) > touchSlopPx && abs(dy) > dx) {
                         // Vertical intent — the content scroll wins.
-                        Log.d(TAG, "vertical bail dx=$dx dy=$dy")
+                        RNSLog.d(TAG, "vertical bail dx=$dx dy=$dy")
                         state = State.IDLE
                     }
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
                 if (state == State.ARMED) {
-                    // UP = lifted without a 30dp pull; CANCEL = an ancestor or
-                    // the system claimed the stream before we activated.
-                    Log.d(
+                    // UP = lifted without an activating pull; CANCEL = an ancestor
+                    // or the system claimed the stream before we activated.
+                    RNSLog.d(
                         TAG,
                         "armed released without activation (${if (ev.actionMasked == MotionEvent.ACTION_CANCEL) "cancelled" else "lifted"})",
                     )
@@ -121,11 +122,11 @@ internal class EdgeSwipeBackController(
                 val dx = (ev.x - downX).coerceIn(0f, stack.width.toFloat())
                 // iOS commit rule — RNSScreenStack.mm:1139-1140.
                 val commit = dx + 0.3f * vx > stack.width / 2f
-                Log.d(TAG, "release dx=$dx vx=$vx commit=$commit")
+                RNSLog.d(TAG, "release dx=$dx vx=$vx commit=$commit")
                 settle(dx, commit)
             }
             MotionEvent.ACTION_CANCEL -> {
-                Log.d(TAG, "cancelled by ancestor/system mid-drag")
+                RNSLog.d(TAG, "cancelled by ancestor/system mid-drag")
                 settle((ev.x - downX).coerceIn(0f, stack.width.toFloat()), false)
             }
         }
@@ -133,6 +134,13 @@ internal class EdgeSwipeBackController(
     }
 
     private fun startDrag() {
+        // Resolving the pair also revalidates the positional invariant
+        // attachBelowTop() relies on (it may have changed since ARMED).
+        val (top, below) = stack.resolveEdgeSwipeScreenPair() ?: run {
+            RNSLog.d(TAG, "active pair unresolvable at activation; aborting drag")
+            state = State.IDLE
+            return
+        }
         try {
             stack.attachBelowTop()
         } catch (e: RuntimeException) {
@@ -140,15 +148,15 @@ internal class EdgeSwipeBackController(
             state = State.IDLE
             return
         }
-        // Resolve AFTER attachBelowTop: the top fragment is re-added and its
-        // coordinator layout recreated; the Screen views persist via recycle().
-        topScreenView = stack.topScreen
-        belowScreenView = stack.fragments[stack.fragments.size - 2].screen
+        // The Screen views persist across attachBelowTop's fragment re-add
+        // (view recycling), so the pair resolved above stays valid.
+        topScreenView = top
+        belowScreenView = below
         state = State.DRAGGING
         // Keep ancestors (incl. the RNGH root) from intercepting mid-drag.
         stack.parent?.requestDisallowInterceptTouchEvent(true)
         track(0f)
-        Log.d(TAG, "drag started top=${topScreenView?.id} below=${belowScreenView?.id}")
+        RNSLog.d(TAG, "drag started top=${topScreenView?.id} below=${belowScreenView?.id}")
     }
 
     private fun track(rawDx: Float) {
@@ -178,8 +186,21 @@ internal class EdgeSwipeBackController(
                 addUpdateListener { track(it.animatedValue as Float) }
                 addListener(
                     object : AnimatorListenerAdapter() {
+                        // cancel() still delivers onAnimationEnd; the abort path
+                        // (onStackChildrenChanged) does its own cleanup and must
+                        // not double-dispatch finish(): a committed finish would
+                        // fire a second ScreenDismissedEvent against a stack
+                        // React is already mutating.
+                        private var cancelled = false
+
+                        override fun onAnimationCancel(animation: Animator) {
+                            cancelled = true
+                        }
+
                         override fun onAnimationEnd(animation: Animator) {
-                            finish(commit)
+                            if (!cancelled) {
+                                finish(commit)
+                            }
                         }
                     },
                 )
@@ -188,7 +209,7 @@ internal class EdgeSwipeBackController(
     }
 
     private fun finish(commit: Boolean) {
-        Log.d(TAG, "finish commit=$commit")
+        RNSLog.d(TAG, "finish commit=$commit")
         velocityTracker?.recycle()
         velocityTracker = null
         settleAnimator = null
@@ -227,9 +248,9 @@ internal class EdgeSwipeBackController(
         }
         val top = stack.topScreen
         val enabled = top?.isGestureEnabled == true
-        val depthOk = stack.fragments.size > 1
         val pushOk = top?.stackPresentation == Screen.StackPresentation.PUSH
-        if (!enabled || !depthOk || !pushOk || stack.width <= 0) {
+        val pair = stack.resolveEdgeSwipeScreenPair()
+        if (!enabled || pair == null || !pushOk || stack.width <= 0) {
             return false
         }
         try {
@@ -238,10 +259,10 @@ internal class EdgeSwipeBackController(
             Log.w(TAG, "attachBelowTop failed; deferring to default back handling", e)
             return false
         }
-        topScreenView = stack.topScreen
-        belowScreenView = stack.fragments[stack.fragments.size - 2].screen
+        topScreenView = pair.first
+        belowScreenView = pair.second
         track(0f)
-        Log.d(TAG, "programmatic dismiss (back button)")
+        RNSLog.d(TAG, "programmatic dismiss (back button)")
         settle(0f, commit = true)
         return true
     }
@@ -252,7 +273,7 @@ internal class EdgeSwipeBackController(
      */
     fun onStackChildrenChanged() {
         if (state == State.DRAGGING || state == State.SETTLING) {
-            Log.d(TAG, "stack changed mid-gesture; aborting")
+            RNSLog.d(TAG, "stack changed mid-gesture; aborting")
             settleAnimator?.cancel()
             settleAnimator = null
             topScreenView?.translationX = 0f
