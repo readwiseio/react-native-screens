@@ -28,7 +28,7 @@ import kotlin.math.abs
 internal class EdgeSwipeBackController(
     private val stack: ScreenStack,
 ) {
-    private enum class State { IDLE, ARMED, DRAGGING, SETTLING }
+    private enum class State { IDLE, ARMED, DRAGGING, SETTLING, AWAITING_REMOVAL }
 
     private var state = State.IDLE
     private var downX = 0f
@@ -37,6 +37,17 @@ internal class EdgeSwipeBackController(
     private var topScreenView: Screen? = null
     private var belowScreenView: Screen? = null
     private var settleAnimator: ValueAnimator? = null
+
+    // Force-release AWAITING_REMOVAL if JS never reconciles a committed pop, so
+    // the gesture/back button can't wedge permanently. Cancelled in the normal
+    // path by onStackChildrenChanged().
+    private val releaseAwaitingRemoval =
+        Runnable {
+            if (state == State.AWAITING_REMOVAL) {
+                Log.w(TAG, "awaiting-removal safeguard fired; JS never reconciled the pop")
+                state = State.IDLE
+            }
+        }
 
     private val density = stack.resources.displayMetrics.density
     private val edgeRegionPx = EDGE_REGION_DP * density
@@ -56,6 +67,13 @@ internal class EdgeSwipeBackController(
                 if (state == State.SETTLING) {
                     // Eat taps while the settle animation finishes.
                     return true
+                }
+                if (state == State.AWAITING_REMOVAL) {
+                    // A committed dismissal is awaiting JS reconciliation of the
+                    // pop. Don't arm a new gesture (a second swipe here would
+                    // over-pop), but let the below screen keep receiving touches.
+                    // Released from onStackChildrenChanged() when the pop lands.
+                    return false
                 }
                 state = State.IDLE
                 val top = stack.topScreen
@@ -91,7 +109,7 @@ internal class EdgeSwipeBackController(
                     } else if (abs(dy) > touchSlopPx && abs(dy) > dx) {
                         // Vertical intent — the content scroll wins.
                         RNSLog.d(TAG, "vertical bail dx=$dx dy=$dy")
-                        state = State.IDLE
+                        disarm()
                     }
                 }
             }
@@ -103,7 +121,7 @@ internal class EdgeSwipeBackController(
                         TAG,
                         "armed released without activation (${if (ev.actionMasked == MotionEvent.ACTION_CANCEL) "cancelled" else "lifted"})",
                     )
-                    state = State.IDLE
+                    disarm()
                 }
         }
         return state == State.DRAGGING
@@ -138,14 +156,14 @@ internal class EdgeSwipeBackController(
         // attachBelowTop() relies on (it may have changed since ARMED).
         val (top, below) = stack.resolveEdgeSwipeScreenPair() ?: run {
             RNSLog.d(TAG, "active pair unresolvable at activation; aborting drag")
-            state = State.IDLE
+            disarm()
             return
         }
         try {
             stack.attachBelowTop()
         } catch (e: RuntimeException) {
             Log.w(TAG, "attachBelowTop failed; aborting drag", e)
-            state = State.IDLE
+            disarm()
             return
         }
         // The Screen views persist across attachBelowTop's fragment re-add
@@ -157,6 +175,23 @@ internal class EdgeSwipeBackController(
         stack.parent?.requestDisallowInterceptTouchEvent(true)
         track(0f)
         RNSLog.d(TAG, "drag started top=${topScreenView?.id} below=${belowScreenView?.id}")
+    }
+
+    private fun recycleTracker() {
+        velocityTracker?.recycle()
+        velocityTracker = null
+    }
+
+    /**
+     * Reset an ARMED-but-not-yet-dragging gesture back to idle, recycling the
+     * tracker. Every ARMED abort (vertical bail, UP/CANCEL, activation failure)
+     * routes through here so the pooled VelocityTracker is never leaked — DOWN
+     * accumulates into it before the state check, so a bare `state = IDLE` would
+     * strand it until the next arm.
+     */
+    private fun disarm() {
+        recycleTracker()
+        state = State.IDLE
     }
 
     private fun track(rawDx: Float) {
@@ -210,8 +245,7 @@ internal class EdgeSwipeBackController(
 
     private fun finish(commit: Boolean) {
         RNSLog.d(TAG, "finish commit=$commit")
-        velocityTracker?.recycle()
-        velocityTracker = null
+        recycleTracker()
         settleAnimator = null
         if (commit) {
             // ScreenDismissedEvent -> native-stack onDismissed -> StackActions.pop().
@@ -230,7 +264,18 @@ internal class EdgeSwipeBackController(
         }
         topScreenView = null
         belowScreenView = null
-        state = State.IDLE
+        if (commit) {
+            // The pop is dispatched to JS, but the top fragment isn't gone until
+            // JS reconciles. Hold ownership in AWAITING_REMOVAL so a second
+            // back/swipe in that window can't begin an overlapping dismissal
+            // (which would over-pop). Released from onStackChildrenChanged() when
+            // the stack updates; the delayed safeguard covers a pop that never lands.
+            state = State.AWAITING_REMOVAL
+            stack.removeCallbacks(releaseAwaitingRemoval)
+            stack.postDelayed(releaseAwaitingRemoval, AWAITING_REMOVAL_TIMEOUT_MS)
+        } else {
+            state = State.IDLE
+        }
     }
 
     /**
@@ -243,7 +288,10 @@ internal class EdgeSwipeBackController(
      * already in flight so repeated presses are swallowed mid-animation.
      */
     fun dismissTopWithAnimation(): Boolean {
-        if (state == State.DRAGGING || state == State.SETTLING) {
+        if (state == State.DRAGGING || state == State.SETTLING || state == State.AWAITING_REMOVAL) {
+            // A dismissal is already animating or awaiting JS reconciliation of
+            // the pop — swallow the press so default back handling doesn't fire a
+            // second, overlapping pop.
             return true
         }
         val top = stack.topScreen
@@ -272,6 +320,13 @@ internal class EdgeSwipeBackController(
      * popped mid-drag). Abort and restore consistent transforms.
      */
     fun onStackChildrenChanged() {
+        if (state == State.AWAITING_REMOVAL) {
+            // JS reconciled the committed pop; release ownership so the next
+            // gesture/back press is accepted.
+            stack.removeCallbacks(releaseAwaitingRemoval)
+            state = State.IDLE
+            return
+        }
         if (state == State.DRAGGING || state == State.SETTLING) {
             RNSLog.d(TAG, "stack changed mid-gesture; aborting")
             settleAnimator?.cancel()
@@ -280,8 +335,7 @@ internal class EdgeSwipeBackController(
             belowScreenView?.translationX = 0f
             topScreenView = null
             belowScreenView = null
-            velocityTracker?.recycle()
-            velocityTracker = null
+            recycleTracker()
             state = State.IDLE
         }
     }
@@ -301,5 +355,10 @@ internal class EdgeSwipeBackController(
 
         // RNSDefaultTransitionDuration — RNSScreenStackAnimator.mm:11.
         private const val BASE_DURATION_MS = 500f
+
+        // Safety valve for AWAITING_REMOVAL: a committed pop normally reconciles
+        // within a frame or two. If it never does, force-release so input can't
+        // wedge permanently.
+        private const val AWAITING_REMOVAL_TIMEOUT_MS = 1000L
     }
 }
