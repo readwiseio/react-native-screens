@@ -2,15 +2,27 @@ package com.swmansion.rnscreens
 
 import android.annotation.SuppressLint
 import android.content.pm.ActivityInfo
+import android.graphics.Bitmap
 import android.graphics.Paint
+import android.graphics.Rect
+import android.graphics.drawable.BitmapDrawable
+import android.os.Build
+import android.os.Handler
+import android.os.HandlerThread
+import android.os.Looper
 import android.os.Parcelable
+import android.util.Log
 import android.util.SparseArray
 import android.view.MotionEvent
+import android.view.PixelCopy
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.webkit.WebView
 import android.widget.ImageView
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import androidx.coordinatorlayout.widget.CoordinatorLayout
 import androidx.core.view.children
 import androidx.fragment.app.Fragment
@@ -459,12 +471,127 @@ class Screen(
 
     fun startRemovalTransition() {
         if (!isBeingRemoved) {
+            captureScreenSnapshotForRemoval()
             isBeingRemoved = true
             startTransitionRecursive(this)
         }
     }
 
+    // --- Screen-level removal snapshot -------------------------------------------------------
+    // The exit animation renders this screen while surface-backed content (e.g. a mid-fling
+    // WebView) may stop producing pixels, which flashes the window background through. When a
+    // screen opts in via the `snapshotOnRemoval` prop, freeze its last presented frame into its
+    // ViewOverlay for the duration of the removal transition so the pop animates real pixels.
+    // Opt-in only: the capture reads the composited window, which is only correct for opaque,
+    // full-window screens (e.g. the Reader) — never enable it for translucent/partial screens.
+
+    /** Set from JS via the `snapshotOnRemoval` prop; default off. */
+    var snapshotOnRemoval: Boolean = false
+
+    private var removalSnapshotBitmap: Bitmap? = null
+    private var removalSnapshotDrawable: BitmapDrawable? = null
+
+    // Ordering note: Fabric may call startRemovalTransition() from its mounting thread, where the
+    // capture is posted to the main looper. The ordering guarantee (capture happens before the
+    // removal transaction's animation) does not rest on that post: ScreenStack.onUpdate() invokes
+    // captureScreenSnapshotForRemoval() synchronously on the main thread immediately before it
+    // creates the removal transaction, and whichever call runs first wins via the bitmap guard.
+    fun captureScreenSnapshotForRemoval() {
+        if (!snapshotOnRemoval) return
+        if (removalSnapshotBitmap != null) return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            captureScreenSnapshotOnMain()
+        } else {
+            post { captureScreenSnapshotOnMain() }
+        }
+    }
+
+    private fun captureScreenSnapshotOnMain() {
+        // Recheck the opt-in: a posted capture can outlive a prop flip on a recycled screen.
+        if (!snapshotOnRemoval) return
+        if (removalSnapshotBitmap != null) return
+        if (!isAttachedToWindow || width <= 0 || height <= 0) return
+        val activity = reactContext.currentActivity ?: return
+        val window = activity.window
+        val decor = window.decorView
+
+        val location = IntArray(2)
+        getLocationInWindow(location)
+        val srcRect = Rect(location[0], location[1], location[0] + width, location[1] + height)
+        // Only capture a fully on-window screen; a clipped rect would be stretched over the
+        // screen's full bounds when displayed.
+        if (!srcRect.intersect(0, 0, decor.width, decor.height)) return
+        if (srcRect.width() != width || srcRect.height() != height) return
+
+        val bitmap =
+            try {
+                Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            } catch (e: OutOfMemoryError) {
+                Log.w(TAG, "removal snapshot allocation failed", e)
+                return
+            }
+
+        val latch = CountDownLatch(1)
+        val resultHolder = intArrayOf(PixelCopy.ERROR_UNKNOWN)
+        // Bitmap ownership on timeout: PixelCopy cannot be cancelled, so the copy may still be
+        // writing into the bitmap after the bounded wait expires. Whoever finishes second (the
+        // callback, or the timed-out waiter observing the callback already ran) recycles it;
+        // recycling from the waiter while the copy is in flight would be a native UAF.
+        val loserRecycles = AtomicBoolean(false)
+        try {
+            PixelCopy.request(window, srcRect, bitmap, { copyResult ->
+                resultHolder[0] = copyResult
+                latch.countDown()
+                if (loserRecycles.getAndSet(true)) {
+                    // The waiter already timed out and abandoned the bitmap — we own cleanup.
+                    bitmap.recycle()
+                }
+            }, snapshotHandler())
+        } catch (e: IllegalArgumentException) {
+            bitmap.recycle()
+            return
+        }
+
+        val completed =
+            try {
+                latch.await(SNAPSHOT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+                false
+            }
+
+        if (!completed) {
+            // Abandon: if the callback already finished in the meantime we recycle, otherwise
+            // the callback sees the flag and recycles when the copy completes.
+            if (loserRecycles.getAndSet(true)) {
+                bitmap.recycle()
+            }
+            return
+        }
+        if (resultHolder[0] != PixelCopy.SUCCESS) {
+            // Copy finished (callback ran) but failed; the bitmap is no longer being written.
+            bitmap.recycle()
+            return
+        }
+
+        val drawable = BitmapDrawable(resources, bitmap)
+        drawable.setBounds(0, 0, width, height)
+        removalSnapshotBitmap = bitmap
+        removalSnapshotDrawable = drawable
+        overlay.add(drawable)
+        invalidate()
+    }
+
+    fun releaseRemovalSnapshot() {
+        removalSnapshotDrawable?.let { overlay.remove(it) }
+        removalSnapshotDrawable = null
+        removalSnapshotBitmap = null
+    }
+    // --- end screen-level removal snapshot ----------------------------------------------------
+
     fun endRemovalTransition() {
+        releaseRemovalSnapshot()
         if (!isBeingRemoved) {
             return
         }
@@ -563,6 +690,11 @@ class Screen(
         }
     }
 
+    override fun onDetachedFromWindow() {
+        releaseRemovalSnapshot()
+        super.onDetachedFromWindow()
+    }
+
     private fun dispatchSheetDetentChanged(
         detentIndex: Int,
         isStable: Boolean,
@@ -650,6 +782,21 @@ class Screen(
          * This value describes value in sheet detents array that will be treated as `fitToContents` option.
          */
         const val SHEET_FIT_TO_CONTENTS = -1.0
+
+        private const val SNAPSHOT_TIMEOUT_MS = 50L
+
+        private var sSnapshotThread: HandlerThread? = null
+        private var sSnapshotHandler: Handler? = null
+
+        @JvmStatic
+        private fun snapshotHandler(): Handler {
+            sSnapshotHandler?.let { return it }
+            val thread = HandlerThread("RNSScreenSnapshot").also { it.start() }
+            val handler = Handler(thread.looper)
+            sSnapshotThread = thread
+            sSnapshotHandler = handler
+            return handler
+        }
     }
 }
 

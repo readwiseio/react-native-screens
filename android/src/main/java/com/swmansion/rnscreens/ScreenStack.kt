@@ -220,6 +220,13 @@ class ScreenStack(
             }
         }
 
+        if (!shouldUseOpenAnimation && topScreenWillChange) {
+            // Close animation: the current top screen is outgoing. Freeze its last presented
+            // frame before the removal transaction starts animating it (covers dismissal paths
+            // where Fabric's removeViewAt — and thus startRemovalTransition — runs later).
+            topScreenWrapper?.screen?.captureScreenSnapshotForRemoval()
+        }
+
         createTransaction().let { transaction ->
             if (stackAnimation != null) {
                 transaction.setTweenAnimations(stackAnimation, shouldUseOpenAnimation)

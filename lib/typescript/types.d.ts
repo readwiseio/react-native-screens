@@ -94,6 +94,13 @@ export interface ScreenProps extends ViewProps {
      */
     gestureEnabled?: boolean;
     /**
+     * When `true`, the screen freezes its last presented frame into a native overlay at the start
+     * of its removal transition (Android). Only for opaque, full-window screens. Defaults to `false`.
+     *
+     * @platform android
+     */
+    snapshotOnRemoval?: boolean;
+    /**
      * Use it to restrict the distance from the edges of screen in which the gesture should be recognized. To be used alongside `fullScreenSwipeEnabled`.
      *
      * @platform ios

@@ -71,7 +71,11 @@ class ScreenAnimationDelegate(
         }
     }
 
-    override fun onAnimationCancel(animation: Animator) = Unit
+    override fun onAnimationCancel(animation: Animator) {
+        // A cancelled exit can leave the screen attached and live; drop the frozen removal
+        // snapshot so the user never returns to a stale frame covering real content.
+        wrapper.screen.releaseRemovalSnapshot()
+    }
 
     override fun onAnimationRepeat(animation: Animator) = Unit
 
