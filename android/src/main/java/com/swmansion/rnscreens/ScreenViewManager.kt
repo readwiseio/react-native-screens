@@ -163,6 +163,14 @@ open class ScreenViewManager :
         view.isGestureEnabled = gestureEnabled
     }
 
+    @ReactProp(name = "snapshotOnRemoval", defaultBoolean = false)
+    override fun setSnapshotOnRemoval(
+        view: Screen,
+        snapshotOnRemoval: Boolean,
+    ) {
+        view.snapshotOnRemoval = snapshotOnRemoval
+    }
+
     @ReactProp(name = "replaceAnimation")
     override fun setReplaceAnimation(
         view: Screen,

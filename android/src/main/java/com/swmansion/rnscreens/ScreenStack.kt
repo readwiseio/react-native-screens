@@ -3,6 +3,7 @@ package com.swmansion.rnscreens
 import android.content.Context
 import android.graphics.Canvas
 import android.os.Build
+import android.view.MotionEvent
 import android.view.View
 import com.facebook.react.bridge.ReactContext
 import com.facebook.react.uimanager.UIManagerHelper
@@ -32,6 +33,43 @@ class ScreenStack(
     private var disappearingTransitioningChildren: MutableList<View> = ArrayList()
 
     var goingForward = false
+
+    // Readwise: native interactive edge-swipe-back (iOS-style). See
+    // EdgeSwipeBackController for the full behavior contract.
+    private val edgeSwipeBackController = EdgeSwipeBackController(this)
+
+    override fun onInterceptTouchEvent(ev: MotionEvent): Boolean =
+        edgeSwipeBackController.onInterceptTouchEvent(ev) || super.onInterceptTouchEvent(ev)
+
+    override fun onTouchEvent(ev: MotionEvent): Boolean =
+        if (edgeSwipeBackController.isInteracting) {
+            edgeSwipeBackController.onTouchEvent(ev)
+        } else {
+            super.onTouchEvent(ev)
+        }
+
+    // Readwise: the (top, below) pair the edge-swipe transition animates.
+    // screenWrappers can carry preloaded (INACTIVE) or dismissed wrappers at its
+    // tail, and attachBelowTop()/detachBelowTop() index that raw list positionally
+    // — so refuse (null) unless the raw tail IS the active pair, in which case
+    // those transactions are guaranteed to act on the screens we animate.
+    internal fun resolveEdgeSwipeScreenPair(): Pair<Screen, Screen>? {
+        val top = topScreen ?: return null
+        val active =
+            screenWrappers.filter {
+                !dismissedWrappers.contains(it) && it.screen.activityState !== Screen.ActivityState.INACTIVE
+            }
+        if (active.size < 2 || screenWrappers.size < 2) {
+            return null
+        }
+        if (active.last().screen !== top ||
+            screenWrappers[screenWrappers.size - 1] !== active[active.size - 1] ||
+            screenWrappers[screenWrappers.size - 2] !== active[active.size - 2]
+        ) {
+            return null
+        }
+        return top to active[active.size - 2].screen
+    }
 
     /**
      * Marks given fragment as to-be-dismissed and performs updates on container
@@ -118,6 +156,11 @@ class ScreenStack(
         super.hasScreen(screenFragmentWrapper) && !dismissedWrappers.contains(screenFragmentWrapper)
 
     override fun onUpdate() {
+        // Readwise: React is mutating the stack — abort any in-flight edge
+        // swipe so transforms/fragment attachment stay consistent (or release
+        // AWAITING_REMOVAL if this update is the committed pop reconciling).
+        edgeSwipeBackController.onStackChildrenChanged()
+
         // When going back from a nested stack with a single screen on it, we may hit an edge case
         // when all screens are dismissed and no screen is to be displayed on top. We need to gracefully
         // handle the case of newTop being NULL, which happens in several places below
@@ -218,6 +261,13 @@ class ScreenStack(
                 childrenDrawingOrderStrategy =
                     ReverseFromIndex(max(stack.lastIndex - dismissedTransparentScreenApproxCount + 1, 0))
             }
+        }
+
+        if (!shouldUseOpenAnimation && topScreenWillChange) {
+            // Close animation: the current top screen is outgoing. Freeze its last presented
+            // frame before the removal transaction starts animating it (covers dismissal paths
+            // where Fabric's removeViewAt — and thus startRemovalTransition — runs later).
+            topScreenWrapper?.screen?.captureScreenSnapshotForRemoval()
         }
 
         createTransaction().let { transaction ->

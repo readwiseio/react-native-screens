@@ -1,0 +1,358 @@
+package com.swmansion.rnscreens
+
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.ValueAnimator
+import android.util.Log
+import android.view.MotionEvent
+import android.view.VelocityTracker
+import android.view.ViewConfiguration
+import android.view.animation.DecelerateInterpolator
+import com.swmansion.rnscreens.utils.RNSLog
+import kotlin.math.abs
+
+/**
+ * Readwise: native interactive edge-swipe-back for Android, mirroring the iOS
+ * interactive pop (RNSScreenStack.mm).
+ *
+ * Detection: DOWN within the controller's 50dp edge band on a screen whose
+ * [Screen.isGestureEnabled] is set. Arming contract: upstream
+ * `@react-navigation/native-stack` forces `gestureEnabled=false` on Android, so
+ * this controller stays disarmed unless the consumer ships a native-stack
+ * patch mapping it — the readwiseio/rekindled fork pins this library together
+ * with `patches/@react-navigation__native-stack@7.12.0.patch`, which computes
+ * `androidEdgeSwipeBack === true && gestureEnabled !== false &&
+ * isRemovePrevented !== true` into the native prop (the prevent-remove
+ * guarantee lives in that patch, not here). Activation after a
+ * platform-touch-slop pull (~8dp) of horizontal-dominant travel.
+ * Tracking: top screen translationX 1:1; screen below parallaxes from
+ * -0.3*width to 0 (RNSScreenStackAnimator.mm:542).
+ * Commit: translation + 0.3*velocity > width/2 (RNSScreenStack.mm:1139-1140),
+ * then notifyTopDetached() -> ScreenDismissedEvent -> JS StackActions.pop().
+ * Cancel: settle back, detachBelowTop(), transforms reset.
+ */
+internal class EdgeSwipeBackController(
+    private val stack: ScreenStack,
+) {
+    private enum class State { IDLE, ARMED, DRAGGING, SETTLING, AWAITING_REMOVAL }
+
+    private var state = State.IDLE
+    private var downX = 0f
+    private var downY = 0f
+    private var velocityTracker: VelocityTracker? = null
+    private var topScreenView: Screen? = null
+    private var belowScreenView: Screen? = null
+    private var settleAnimator: ValueAnimator? = null
+
+    // Roll back a committed dismissal whose pop JS never reconciled, so the gesture
+    // can't wedge input permanently AND the stack returns to a consistent shape:
+    // finish(true) left the top screen translated fully off-window with the below
+    // fragment attached, so releasing state alone would leave the next gesture
+    // running against a stack whose visible top isn't its logical top. The committed
+    // pair is retained through AWAITING_REMOVAL precisely so this rollback can
+    // restore it. Cancelled in the normal path by onStackChildrenChanged().
+    private val releaseAwaitingRemoval =
+        Runnable {
+            if (state == State.AWAITING_REMOVAL) {
+                Log.w(TAG, "awaiting-removal safeguard fired; JS never reconciled the pop — rolling back")
+                topScreenView?.translationX = 0f
+                belowScreenView?.translationX = 0f
+                try {
+                    stack.detachBelowTop()
+                } catch (e: RuntimeException) {
+                    Log.w(TAG, "detachBelowTop failed on rollback", e)
+                }
+                topScreenView = null
+                belowScreenView = null
+                state = State.IDLE
+            }
+        }
+
+    private val density = stack.resources.displayMetrics.density
+    private val edgeRegionPx = EDGE_REGION_DP * density
+
+    // Activation distance: the platform drag threshold (~8dp), matching how
+    // eagerly UIKit's pan hysteresis (~10pt) engages on iOS. The
+    // horizontal-dominance check below keeps scroll intents safe.
+    private val touchSlopPx = ViewConfiguration.get(stack.context).scaledTouchSlop.toFloat()
+    private val activationPx = touchSlopPx
+
+    val isInteracting: Boolean
+        get() = state == State.DRAGGING || state == State.SETTLING
+
+    fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                if (state == State.SETTLING) {
+                    // Eat taps while the settle animation finishes.
+                    return true
+                }
+                if (state == State.AWAITING_REMOVAL) {
+                    // A committed dismissal is awaiting JS reconciliation of the
+                    // pop. Don't arm a new gesture (a second swipe here would
+                    // over-pop), but let the below screen keep receiving touches.
+                    // Released from onStackChildrenChanged() when the pop lands.
+                    return false
+                }
+                state = State.IDLE
+                // Cheapest-first rejection after the state guards above: nearly
+                // every touch is outside the band, and pair resolution (a filter
+                // pass over screenWrappers) must stay dead last so disabled
+                // screens and mid-screen touches never pay for it.
+                if (ev.x > edgeRegionPx) {
+                    return false
+                }
+                val top = stack.topScreen
+                // isGestureEnabled is the arming signal: native-stack maps
+                // androidEdgeSwipeBack + gestureEnabled + usePreventRemove into it.
+                if (top?.isGestureEnabled != true) {
+                    RNSLog.d(TAG, "down in band but not armed: gesture disabled")
+                    return false
+                }
+                if (top.stackPresentation != Screen.StackPresentation.PUSH) {
+                    RNSLog.d(TAG, "down in band but not armed: non-push presentation")
+                    return false
+                }
+                if (stack.resolveEdgeSwipeScreenPair() == null) {
+                    RNSLog.d(TAG, "down in band but not armed: active pair unresolvable")
+                    return false
+                }
+                state = State.ARMED
+                downX = ev.x
+                downY = ev.y
+                velocityTracker?.recycle()
+                velocityTracker = VelocityTracker.obtain()
+                velocityTracker?.addMovement(ev)
+                RNSLog.d(TAG, "armed at x=${ev.x} (edge=${edgeRegionPx}px)")
+            }
+            MotionEvent.ACTION_MOVE -> {
+                velocityTracker?.addMovement(ev)
+                if (state == State.ARMED) {
+                    val dx = ev.x - downX
+                    val dy = ev.y - downY
+                    if (dx >= activationPx && dx > abs(dy)) {
+                        // Deliberate horizontal pull from the edge — steal the
+                        // stream (children get ACTION_CANCEL, like UIKit).
+                        startDrag()
+                    } else if (abs(dy) > touchSlopPx && abs(dy) > dx) {
+                        // Vertical intent — the content scroll wins.
+                        RNSLog.d(TAG, "vertical bail dx=$dx dy=$dy")
+                        disarm()
+                    }
+                }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                if (state == State.ARMED) {
+                    // UP = lifted without an activating pull; CANCEL = an ancestor
+                    // or the system claimed the stream before we activated.
+                    RNSLog.d(
+                        TAG,
+                        "armed released without activation (${if (ev.actionMasked == MotionEvent.ACTION_CANCEL) "cancelled" else "lifted"})",
+                    )
+                    disarm()
+                }
+        }
+        return state == State.DRAGGING
+    }
+
+    fun onTouchEvent(ev: MotionEvent): Boolean {
+        if (state != State.DRAGGING) {
+            return state == State.SETTLING
+        }
+        velocityTracker?.addMovement(ev)
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_MOVE -> track(ev.x - downX)
+            MotionEvent.ACTION_UP -> {
+                velocityTracker?.computeCurrentVelocity(1000)
+                val vx = velocityTracker?.xVelocity ?: 0f
+                val dx = (ev.x - downX).coerceIn(0f, stack.width.toFloat())
+                // iOS commit rule — RNSScreenStack.mm:1139-1140.
+                val commit = dx + 0.3f * vx > stack.width / 2f
+                RNSLog.d(TAG, "release dx=$dx vx=$vx commit=$commit")
+                settle(dx, commit)
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                RNSLog.d(TAG, "cancelled by ancestor/system mid-drag")
+                settle((ev.x - downX).coerceIn(0f, stack.width.toFloat()), false)
+            }
+        }
+        return true
+    }
+
+    private fun startDrag() {
+        // Resolving the pair also revalidates the positional invariant
+        // attachBelowTop() relies on (it may have changed since ARMED).
+        val (top, below) =
+            stack.resolveEdgeSwipeScreenPair() ?: run {
+                RNSLog.d(TAG, "active pair unresolvable at activation; aborting drag")
+                disarm()
+                return
+            }
+        try {
+            stack.attachBelowTop()
+        } catch (e: RuntimeException) {
+            Log.w(TAG, "attachBelowTop failed; aborting drag", e)
+            disarm()
+            return
+        }
+        // The Screen views persist across attachBelowTop's fragment re-add
+        // (view recycling), so the pair resolved above stays valid.
+        topScreenView = top
+        belowScreenView = below
+        state = State.DRAGGING
+        // Keep ancestors (incl. the RNGH root) from intercepting mid-drag.
+        stack.parent?.requestDisallowInterceptTouchEvent(true)
+        track(0f)
+        RNSLog.d(TAG, "drag started top=${topScreenView?.id} below=${belowScreenView?.id}")
+    }
+
+    private fun recycleTracker() {
+        velocityTracker?.recycle()
+        velocityTracker = null
+    }
+
+    /**
+     * Reset an ARMED-but-not-yet-dragging gesture back to idle, recycling the
+     * tracker. Every ARMED abort (vertical bail, UP/CANCEL, activation failure)
+     * routes through here so the pooled VelocityTracker is never leaked — DOWN
+     * accumulates into it before the state check, so a bare `state = IDLE` would
+     * strand it until the next arm.
+     */
+    private fun disarm() {
+        recycleTracker()
+        state = State.IDLE
+    }
+
+    private fun track(rawDx: Float) {
+        val width = stack.width.toFloat()
+        val dx = rawDx.coerceIn(0f, width)
+        topScreenView?.translationX = dx
+        // Below screen parallax — RNSScreenStackAnimator.mm:542.
+        belowScreenView?.translationX = -PARALLAX_FACTOR * (width - dx)
+    }
+
+    private fun settle(
+        fromDx: Float,
+        commit: Boolean,
+    ) {
+        state = State.SETTLING
+        val width = stack.width.toFloat()
+        val target = if (commit) width else 0f
+        // Base 0.5s (RNSDefaultTransitionDuration), proportional to remaining distance.
+        val remaining = abs(target - fromDx) / width
+        val duration = (BASE_DURATION_MS * remaining).toLong().coerceIn(80L, BASE_DURATION_MS.toLong())
+        settleAnimator?.cancel()
+        settleAnimator =
+            ValueAnimator.ofFloat(fromDx, target).apply {
+                this.duration = duration
+                // Approximates iOS's overdamped nav spring (ratio ~4.56).
+                interpolator = DecelerateInterpolator(1.5f)
+                addUpdateListener { track(it.animatedValue as Float) }
+                addListener(
+                    object : AnimatorListenerAdapter() {
+                        // cancel() still delivers onAnimationEnd; the abort path
+                        // (onStackChildrenChanged) does its own cleanup and must
+                        // not double-dispatch finish(): a committed finish would
+                        // fire a second ScreenDismissedEvent against a stack
+                        // React is already mutating.
+                        private var cancelled = false
+
+                        override fun onAnimationCancel(animation: Animator) {
+                            cancelled = true
+                        }
+
+                        override fun onAnimationEnd(animation: Animator) {
+                            if (!cancelled) {
+                                finish(commit)
+                            }
+                        }
+                    },
+                )
+                start()
+            }
+    }
+
+    private fun finish(commit: Boolean) {
+        RNSLog.d(TAG, "finish commit=$commit")
+        recycleTracker()
+        settleAnimator = null
+        if (commit) {
+            // ScreenDismissedEvent -> native-stack onDismissed -> StackActions.pop().
+            // The JS pop removes the top fragment; reset the below screen so it
+            // sits at identity when it becomes top.
+            stack.notifyTopDetached()
+            belowScreenView?.translationX = 0f
+            // The pop is dispatched to JS, but the top fragment isn't gone until
+            // JS reconciles. Hold ownership in AWAITING_REMOVAL so a second
+            // swipe in that window can't begin an overlapping dismissal (which
+            // would over-pop), and RETAIN the committed pair so the timeout
+            // safeguard can roll the stack back if JS never reconciles. The refs
+            // are cleared on reconciliation (onStackChildrenChanged) or rollback.
+            state = State.AWAITING_REMOVAL
+            stack.removeCallbacks(releaseAwaitingRemoval)
+            stack.postDelayed(releaseAwaitingRemoval, AWAITING_REMOVAL_TIMEOUT_MS)
+        } else {
+            try {
+                stack.detachBelowTop()
+            } catch (e: RuntimeException) {
+                Log.w(TAG, "detachBelowTop failed on cancel", e)
+            }
+            topScreenView?.translationX = 0f
+            belowScreenView?.translationX = 0f
+            topScreenView = null
+            belowScreenView = null
+            state = State.IDLE
+        }
+    }
+
+    /**
+     * The stack's children changed under an active gesture (e.g. hardware back
+     * popped mid-drag). Abort and restore consistent transforms.
+     */
+    fun onStackChildrenChanged() {
+        if (state == State.AWAITING_REMOVAL) {
+            // JS reconciled the committed pop; release ownership so the next
+            // gesture is accepted. Deliberately does NOT reset translations —
+            // the dismissed screen is off-window and restoring it here would
+            // flash it back onscreen for a frame before removal. The retained
+            // committed pair is only for the timeout rollback; drop it now.
+            stack.removeCallbacks(releaseAwaitingRemoval)
+            topScreenView = null
+            belowScreenView = null
+            state = State.IDLE
+            return
+        }
+        if (state == State.DRAGGING || state == State.SETTLING) {
+            RNSLog.d(TAG, "stack changed mid-gesture; aborting")
+            settleAnimator?.cancel()
+            settleAnimator = null
+            topScreenView?.translationX = 0f
+            belowScreenView?.translationX = 0f
+            topScreenView = null
+            belowScreenView = null
+            recycleTracker()
+            state = State.IDLE
+        }
+    }
+
+    companion object {
+        private const val TAG = "[EdgeSwipeBack]"
+
+        // The controller's Android edge region. The system back gesture owns
+        // the outermost ~30dp of this on gesture-nav devices (by design — we
+        // don't fight it; a bezel swipe does a plain system back, which also
+        // pops); the strip beyond it is the interactive drag.
+        private const val EDGE_REGION_DP = 50f
+
+        // RNSScreenStackAnimator.mm:542.
+        private const val PARALLAX_FACTOR = 0.3f
+
+        // RNSDefaultTransitionDuration — RNSScreenStackAnimator.mm:11.
+        private const val BASE_DURATION_MS = 500f
+
+        // Safety valve for AWAITING_REMOVAL: a committed pop normally reconciles
+        // within a frame or two. If it never does, force-release so input can't
+        // wedge permanently.
+        private const val AWAITING_REMOVAL_TIMEOUT_MS = 1000L
+    }
+}

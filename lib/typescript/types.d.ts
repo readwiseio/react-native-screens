@@ -97,6 +97,18 @@ export interface ScreenProps extends ViewProps {
      */
     gestureEnabled?: boolean;
     /**
+     * When `true`, a best-effort capture of the screen's last presented frame is requested at the
+     * start of its removal transition and installed into a native overlay, so the exit animation
+     * shows real pixels even if surface-backed content (e.g. a WebView) stops rendering
+     * mid-transition. Best-effort: the capture may complete asynchronously shortly after the
+     * transition starts, and is dropped if PixelCopy fails or the view has left the window. Only
+     * enable for opaque, full-window screens — the capture reads the composited window.
+     * Defaults to `false`.
+     *
+     * @platform android
+     */
+    snapshotOnRemoval?: boolean;
+    /**
      * Use it to restrict the distance from the edges of screen in which the gesture should be recognized. To be used alongside `fullScreenSwipeEnabled`.
      *
      * @platform ios

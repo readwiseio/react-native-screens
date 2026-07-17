@@ -2,10 +2,19 @@ package com.swmansion.rnscreens
 
 import android.annotation.SuppressLint
 import android.content.pm.ActivityInfo
+import android.graphics.Bitmap
 import android.graphics.Paint
+import android.graphics.Rect
+import android.graphics.drawable.BitmapDrawable
+import android.os.Build
+import android.os.Handler
+import android.os.HandlerThread
+import android.os.Looper
 import android.os.Parcelable
+import android.util.Log
 import android.util.SparseArray
 import android.view.MotionEvent
+import android.view.PixelCopy
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -35,6 +44,8 @@ import com.swmansion.rnscreens.events.SheetProgressEvent
 import com.swmansion.rnscreens.ext.asScreenStackFragment
 import com.swmansion.rnscreens.ext.parentAsViewGroup
 import com.swmansion.rnscreens.gamma.common.FragmentProviding
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 @SuppressLint("ViewConstructor") // Only we construct this view, it is never inflated.
 class Screen(
@@ -460,12 +471,158 @@ class Screen(
 
     fun startRemovalTransition() {
         if (!isBeingRemoved) {
+            captureScreenSnapshotForRemoval()
             isBeingRemoved = true
             startTransitionRecursive(this)
         }
     }
 
+    // --- Screen-level removal snapshot -------------------------------------------------------
+    // The exit animation renders this screen while surface-backed content (e.g. a mid-fling
+    // WebView) may stop producing pixels, which flashes the window background through. When a
+    // screen opts in via the `snapshotOnRemoval` prop, freeze its last presented frame into its
+    // ViewOverlay for the duration of the removal transition so the pop animates real pixels.
+    // Opt-in only: the capture reads the composited window, which is only correct for opaque,
+    // full-window screens (e.g. the Reader) — never enable it for translucent/partial screens.
+
+    /** Set from JS via the `snapshotOnRemoval` prop; default off. */
+    var snapshotOnRemoval: Boolean = false
+
+    private var removalSnapshotDrawable: BitmapDrawable? = null
+
+    // One capture attempt per removal: a snapshot is only valid if taken before the removal
+    // transaction starts animating. Whether the attempt fails outright or merely completes
+    // asynchronously (the bounded wait elapsing does not fail it — the same PixelCopy stays
+    // live and may install from its posted continuation), later entry points must not issue
+    // another capture: a retry could photograph an already-translated, mid-exit window.
+    //
+    // Attempt state is owned by the MAIN thread and claimed only at actual capture time, so the
+    // synchronous pre-transaction call in ScreenStack.onUpdate() always wins over queued off-main
+    // requests: a queued request that runs after it no-ops on the claimed attempt.
+    private var removalSnapshotAttempted: Boolean = false
+
+    // Incremented (on main) whenever the snapshot lifecycle resets. An off-main request carries
+    // the generation it was posted under and no-ops if its removal has already been cleaned up,
+    // so a delayed post can never install an overlay into a later lifecycle.
+    @Volatile
+    private var removalSnapshotGeneration: Int = 0
+
+    fun captureScreenSnapshotForRemoval() {
+        if (!snapshotOnRemoval) return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            captureScreenSnapshotOnMain()
+        } else {
+            val requestGeneration = removalSnapshotGeneration
+            post {
+                if (requestGeneration == removalSnapshotGeneration) {
+                    captureScreenSnapshotOnMain()
+                }
+            }
+        }
+    }
+
+    private fun captureScreenSnapshotOnMain() {
+        // Recheck the opt-in: a posted capture can outlive a prop flip on a recycled screen.
+        if (!snapshotOnRemoval) return
+        if (removalSnapshotAttempted) return
+        removalSnapshotAttempted = true
+        if (!isAttachedToWindow || width <= 0 || height <= 0) return
+        val activity = reactContext.currentActivity ?: return
+        val window = activity.window
+        val decor = window.decorView
+
+        val location = IntArray(2)
+        getLocationInWindow(location)
+        val srcRect = Rect(location[0], location[1], location[0] + width, location[1] + height)
+        // Only capture a fully on-window screen; a clipped rect would be stretched over the
+        // screen's full bounds when displayed.
+        if (!srcRect.intersect(0, 0, decor.width, decor.height)) return
+        if (srcRect.width() != width || srcRect.height() != height) return
+
+        val bitmap =
+            try {
+                Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            } catch (e: OutOfMemoryError) {
+                Log.w(TAG, "removal snapshot allocation failed", e)
+                return
+            }
+
+        // The copy is requested before the removal transaction is created, so it reads the
+        // pre-transition presented frame. The main thread waits briefly for it (measured
+        // completion is 6-16ms, so the typical install is synchronous — which matters: the
+        // overlay must be up before the next frame can present the app's own teardown blank,
+        // or one black frame slips through). If the copy is slower, the main thread moves on
+        // and the completion posts the install instead: an in-flight successful copy is never
+        // abandoned merely because the synchronous wait elapsed. (The posted continuation still
+        // drops the bitmap on copy failure, generation change, or detach.)
+        //
+        // The install/drop decision runs exactly once, always on the main thread (`handled` is
+        // only touched there): the synchronous path claims it when the copy beats the bounded
+        // wait; otherwise the posted continuation claims it. Install only if this removal is
+        // still live (generation) and the screen attached; otherwise the bitmap is dropped.
+        val requestGeneration = removalSnapshotGeneration
+        val handled = booleanArrayOf(false)
+        val latch = CountDownLatch(1)
+        val pixelCopyResult = intArrayOf(PixelCopy.ERROR_UNKNOWN)
+        try {
+            PixelCopy.request(window, srcRect, bitmap, { copyResult ->
+                pixelCopyResult[0] = copyResult
+                latch.countDown()
+                mainHandler.post {
+                    if (!handled[0]) {
+                        handled[0] = true
+                        installOrDropRemovalSnapshot(copyResult, bitmap, requestGeneration)
+                    }
+                }
+            }, snapshotHandler)
+        } catch (e: IllegalArgumentException) {
+            bitmap.recycle()
+            return
+        }
+
+        val completed =
+            try {
+                latch.await(SNAPSHOT_SYNC_WAIT_MS, TimeUnit.MILLISECONDS)
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+                false
+            }
+        if (completed && !handled[0]) {
+            handled[0] = true
+            installOrDropRemovalSnapshot(pixelCopyResult[0], bitmap, requestGeneration)
+        }
+    }
+
+    private fun installOrDropRemovalSnapshot(
+        copyResult: Int,
+        bitmap: Bitmap,
+        requestGeneration: Int,
+    ) {
+        if (copyResult == PixelCopy.SUCCESS &&
+            requestGeneration == removalSnapshotGeneration &&
+            isAttachedToWindow
+        ) {
+            val drawable = BitmapDrawable(resources, bitmap)
+            drawable.setBounds(0, 0, width, height)
+            removalSnapshotDrawable = drawable
+            overlay.add(drawable)
+            invalidate()
+        } else {
+            bitmap.recycle()
+        }
+    }
+
+    fun releaseRemovalSnapshot() {
+        removalSnapshotGeneration++
+        removalSnapshotDrawable?.let { overlay.remove(it) }
+        removalSnapshotDrawable = null
+        removalSnapshotAttempted = false
+    }
+    // --- end screen-level removal snapshot ----------------------------------------------------
+
     fun endRemovalTransition() {
+        releaseRemovalSnapshot()
         if (!isBeingRemoved) {
             return
         }
@@ -562,6 +719,11 @@ class Screen(
                 )
             }
         }
+    }
+
+    override fun onDetachedFromWindow() {
+        releaseRemovalSnapshot()
+        super.onDetachedFromWindow()
     }
 
     private fun dispatchSheetDetentChanged(
@@ -668,6 +830,19 @@ class Screen(
          * This value describes value in sheet detents array that will be treated as `fitToContents` option.
          */
         const val SHEET_FIT_TO_CONTENTS = -1.0
+
+        // Bounded synchronous wait for the PixelCopy before handing the install to the async
+        // continuation. ~One frame at 60Hz (more than one at 90/120Hz refresh rates).
+        private const val SNAPSHOT_SYNC_WAIT_MS = 17L
+
+        // Shared thread PixelCopy callbacks land on; one idle thread for the process lifetime.
+        private val snapshotHandler: Handler by lazy {
+            Handler(HandlerThread("RNSScreenSnapshot").also { it.start() }.looper)
+        }
+
+        // Main-thread continuation for snapshot installs. A plain handler (not View.post) so the
+        // decision always runs even if the view detaches while the copy is in flight.
+        private val mainHandler: Handler by lazy { Handler(Looper.getMainLooper()) }
     }
 }
 
