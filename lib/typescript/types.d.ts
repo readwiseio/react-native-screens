@@ -95,7 +95,9 @@ export interface ScreenProps extends ViewProps {
     gestureEnabled?: boolean;
     /**
      * When `true`, the screen freezes its last presented frame into a native overlay at the start
-     * of its removal transition (Android). Only for opaque, full-window screens. Defaults to `false`.
+     * of its removal transition, so the exit animation shows real pixels even if surface-backed
+     * content (e.g. a WebView) stops rendering mid-transition. Only enable for opaque, full-window
+     * screens — the capture reads the composited window. Defaults to `false`.
      *
      * @platform android
      */

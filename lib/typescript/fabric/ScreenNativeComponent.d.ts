@@ -60,6 +60,7 @@ export interface NativeProps extends ViewProps {
     homeIndicatorHidden?: boolean;
     preventNativeDismiss?: boolean;
     gestureEnabled?: WithDefault<boolean, true>;
+    snapshotOnRemoval?: WithDefault<boolean, false>;
     statusBarColor?: ColorValue;
     statusBarHidden?: boolean;
     screenOrientation?: string;

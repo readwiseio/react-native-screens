@@ -490,8 +490,10 @@ class Screen(
     private var removalSnapshotDrawable: BitmapDrawable? = null
 
     // One capture attempt per removal: a snapshot is only valid if taken before the removal
-    // transaction starts animating. If the pre-transaction attempt fails (timeout etc.), a later
-    // entry point must NOT retry — it could capture an already-translated, mid-exit window.
+    // transaction starts animating. Whether the attempt fails outright or merely completes
+    // asynchronously (the bounded wait elapsing does not fail it — the same PixelCopy stays
+    // live and may install from its posted continuation), later entry points must not issue
+    // another capture: a retry could photograph an already-translated, mid-exit window.
     //
     // Attempt state is owned by the MAIN thread and claimed only at actual capture time, so the
     // synchronous pre-transaction call in ScreenStack.onUpdate() always wins over queued off-main
@@ -546,12 +548,13 @@ class Screen(
             }
 
         // The copy is requested before the removal transaction is created, so it reads the
-        // pre-transition presented frame. The main thread waits at most ONE frame period for it
-        // (measured completion is 6-16ms, so the typical install is synchronous — which matters:
-        // the overlay must be up before the next frame can present the app's own teardown blank,
-        // or one black frame slips through). If the copy is slower, the main thread moves on and
-        // the completion posts the install instead: worst case is one frame of jank or one late
-        // frame, never a long stall and never a dropped snapshot.
+        // pre-transition presented frame. The main thread waits briefly for it (measured
+        // completion is 6-16ms, so the typical install is synchronous — which matters: the
+        // overlay must be up before the next frame can present the app's own teardown blank,
+        // or one black frame slips through). If the copy is slower, the main thread moves on
+        // and the completion posts the install instead: an in-flight successful copy is never
+        // abandoned merely because the synchronous wait elapsed. (The posted continuation still
+        // drops the bitmap on copy failure, generation change, or detach.)
         //
         // The install/drop decision runs exactly once, always on the main thread (`handled` is
         // only touched there): the synchronous path claims it when the copy beats the bounded
@@ -810,8 +813,8 @@ class Screen(
          */
         const val SHEET_FIT_TO_CONTENTS = -1.0
 
-        // One 60Hz frame period: the most the main thread will wait for a PixelCopy before
-        // handing the install to the async continuation.
+        // Bounded synchronous wait for the PixelCopy before handing the install to the async
+        // continuation. ~One frame at 60Hz (more than one at 90/120Hz refresh rates).
         private const val SNAPSHOT_SYNC_WAIT_MS = 17L
 
         // Shared thread PixelCopy callbacks land on; one idle thread for the process lifetime.
