@@ -15,11 +15,16 @@ import kotlin.math.abs
  * Readwise: native interactive edge-swipe-back for Android, mirroring the iOS
  * interactive pop (RNSScreenStack.mm).
  *
- * Detection: DOWN within the edge band (50dp — master's reader gesture
- * hitSlop) on a screen whose [Screen.isGestureEnabled] is set (native-stack
- * maps androidEdgeSwipeBack/gestureEnabled/usePreventRemove into it),
- * activation after a platform-touch-slop pull (~8dp) of horizontal-dominant
- * travel.
+ * Detection: DOWN within the controller's 50dp edge band on a screen whose
+ * [Screen.isGestureEnabled] is set. Arming contract: upstream
+ * `@react-navigation/native-stack` forces `gestureEnabled=false` on Android, so
+ * this controller stays disarmed unless the consumer ships a native-stack
+ * patch mapping it — the readwiseio/rekindled fork pins this library together
+ * with `patches/@react-navigation__native-stack@7.12.0.patch`, which computes
+ * `androidEdgeSwipeBack === true && gestureEnabled !== false &&
+ * isRemovePrevented !== true` into the native prop (the prevent-remove
+ * guarantee lives in that patch, not here). Activation after a
+ * platform-touch-slop pull (~8dp) of horizontal-dominant travel.
  * Tracking: top screen translationX 1:1; screen below parallaxes from
  * -0.3*width to 0 (RNSScreenStackAnimator.mm:542).
  * Commit: translation + 0.3*velocity > width/2 (RNSScreenStack.mm:1139-1140),
@@ -39,13 +44,26 @@ internal class EdgeSwipeBackController(
     private var belowScreenView: Screen? = null
     private var settleAnimator: ValueAnimator? = null
 
-    // Force-release AWAITING_REMOVAL if JS never reconciles a committed pop, so
-    // the gesture can't wedge input permanently. Cancelled in the normal path
-    // by onStackChildrenChanged().
+    // Roll back a committed dismissal whose pop JS never reconciled, so the gesture
+    // can't wedge input permanently AND the stack returns to a consistent shape:
+    // finish(true) left the top screen translated fully off-window with the below
+    // fragment attached, so releasing state alone would leave the next gesture
+    // running against a stack whose visible top isn't its logical top. The committed
+    // pair is retained through AWAITING_REMOVAL precisely so this rollback can
+    // restore it. Cancelled in the normal path by onStackChildrenChanged().
     private val releaseAwaitingRemoval =
         Runnable {
             if (state == State.AWAITING_REMOVAL) {
-                Log.w(TAG, "awaiting-removal safeguard fired; JS never reconciled the pop")
+                Log.w(TAG, "awaiting-removal safeguard fired; JS never reconciled the pop — rolling back")
+                topScreenView?.translationX = 0f
+                belowScreenView?.translationX = 0f
+                try {
+                    stack.detachBelowTop()
+                } catch (e: RuntimeException) {
+                    Log.w(TAG, "detachBelowTop failed on rollback", e)
+                }
+                topScreenView = null
+                belowScreenView = null
                 state = State.IDLE
             }
         }
@@ -264,6 +282,15 @@ internal class EdgeSwipeBackController(
             // sits at identity when it becomes top.
             stack.notifyTopDetached()
             belowScreenView?.translationX = 0f
+            // The pop is dispatched to JS, but the top fragment isn't gone until
+            // JS reconciles. Hold ownership in AWAITING_REMOVAL so a second
+            // swipe in that window can't begin an overlapping dismissal (which
+            // would over-pop), and RETAIN the committed pair so the timeout
+            // safeguard can roll the stack back if JS never reconciles. The refs
+            // are cleared on reconciliation (onStackChildrenChanged) or rollback.
+            state = State.AWAITING_REMOVAL
+            stack.removeCallbacks(releaseAwaitingRemoval)
+            stack.postDelayed(releaseAwaitingRemoval, AWAITING_REMOVAL_TIMEOUT_MS)
         } else {
             try {
                 stack.detachBelowTop()
@@ -272,19 +299,8 @@ internal class EdgeSwipeBackController(
             }
             topScreenView?.translationX = 0f
             belowScreenView?.translationX = 0f
-        }
-        topScreenView = null
-        belowScreenView = null
-        if (commit) {
-            // The pop is dispatched to JS, but the top fragment isn't gone until
-            // JS reconciles. Hold ownership in AWAITING_REMOVAL so a second
-            // swipe in that window can't begin an overlapping dismissal (which
-            // would over-pop). Released from onStackChildrenChanged() when the
-            // stack updates; the delayed safeguard covers a pop that never lands.
-            state = State.AWAITING_REMOVAL
-            stack.removeCallbacks(releaseAwaitingRemoval)
-            stack.postDelayed(releaseAwaitingRemoval, AWAITING_REMOVAL_TIMEOUT_MS)
-        } else {
+            topScreenView = null
+            belowScreenView = null
             state = State.IDLE
         }
     }
@@ -298,8 +314,11 @@ internal class EdgeSwipeBackController(
             // JS reconciled the committed pop; release ownership so the next
             // gesture is accepted. Deliberately does NOT reset translations —
             // the dismissed screen is off-window and restoring it here would
-            // flash it back onscreen for a frame before removal.
+            // flash it back onscreen for a frame before removal. The retained
+            // committed pair is only for the timeout rollback; drop it now.
             stack.removeCallbacks(releaseAwaitingRemoval)
+            topScreenView = null
+            belowScreenView = null
             state = State.IDLE
             return
         }
@@ -319,11 +338,10 @@ internal class EdgeSwipeBackController(
     companion object {
         private const val TAG = "[EdgeSwipeBack]"
 
-        // Master's reader gesture band: useNavigationGestures hitSlop
-        // {left: 0, width: 50}. The Android system back gesture owns the
-        // outermost ~30dp of this on gesture-nav devices (by design — we
-        // don't fight it; a bezel swipe does a plain system back, which
-        // also pops); the strip beyond it is the interactive drag.
+        // The controller's Android edge region. The system back gesture owns
+        // the outermost ~30dp of this on gesture-nav devices (by design — we
+        // don't fight it; a bezel swipe does a plain system back, which also
+        // pops); the strip beyond it is the interactive drag.
         private const val EDGE_REGION_DP = 50f
 
         // RNSScreenStackAnimator.mm:542.
