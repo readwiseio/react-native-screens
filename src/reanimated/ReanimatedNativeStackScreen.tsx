@@ -4,12 +4,14 @@ import { InnerScreen } from '../components/Screen';
 import {
   HeaderHeightChangeEventType,
   ScreenProps,
+  SheetProgressEventType,
   TransitionProgressEventType,
 } from '../types';
 
 // @ts-ignore file to be used only if `react-native-reanimated` available in the project
 import Animated, { useEvent, useSharedValue } from 'react-native-reanimated';
 import ReanimatedTransitionProgressContext from './ReanimatedTransitionProgressContext';
+import ReanimatedSheetProgressContext from './ReanimatedSheetProgressContext';
 import {
   useSafeAreaFrame,
   useSafeAreaInsets,
@@ -59,10 +61,30 @@ const ReanimatedNativeStackScreen = React.forwardRef<
   const closing = useSharedValue(0);
   const goingForward = useSharedValue(0);
 
+  // Sheet openness [0,1]; 1 = settled open. Updated on the UI thread from the native onSheetProgress
+  // event. iOS emits from the first present frame, so it starts at 0 (closed) to avoid one open-state
+  // frame before the first event. Android only emits from the bottom sheet's onSlide (drags), so it
+  // starts at 1 or a programmatic present would leave consumers stuck closed.
+  const sheetProgress = useSharedValue(Platform.OS === 'ios' ? 0 : 1);
+
   return (
     <AnimatedScreen
       // @ts-ignore some problems with ref and onTransitionProgressReanimated being "fake" prop for parsing of `useEvent` return value
       ref={ref}
+      onSheetProgressReanimated={useEvent(
+        (event: SheetProgressEventType) => {
+          'worklet';
+          sheetProgress.value = event.progress;
+        },
+        [
+          // @ts-ignore wrong type
+          Platform.OS === 'android'
+            ? 'onSheetProgress'
+            : ENABLE_FABRIC
+            ? 'onSheetProgress'
+            : 'topSheetProgress',
+        ],
+      )}
       onTransitionProgressReanimated={useEvent(
         (event: TransitionProgressEventType) => {
           'worklet';
@@ -106,7 +128,9 @@ const ReanimatedNativeStackScreen = React.forwardRef<
             closing,
             goingForward,
           }}>
-          {children}
+          <ReanimatedSheetProgressContext.Provider value={sheetProgress}>
+            {children}
+          </ReanimatedSheetProgressContext.Provider>
         </ReanimatedTransitionProgressContext.Provider>
       </ReanimatedHeaderHeightContext.Provider>
     </AnimatedScreen>

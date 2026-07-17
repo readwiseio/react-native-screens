@@ -25,6 +25,9 @@ export type TransitionProgressEventType = {
     closing: number;
     goingForward: number;
 };
+export type SheetProgressEventType = {
+    progress: number;
+};
 export type GestureResponseDistanceType = {
     start?: number;
     end?: number;
@@ -297,6 +300,12 @@ export interface ScreenProps extends ViewProps {
      * An internal callback called every frame during the transition of screens of `native-stack`, used to feed transition context.
      */
     onTransitionProgress?: (e: NativeSyntheticEvent<TransitionProgressEventType>) => void;
+    /**
+     * An internal callback called every frame while a formSheet/pageSheet is presented (open
+     * animation, interactive drag, and dismiss), reporting sheet openness in [0,1] (1 = settled
+     * open, 0 = dismissed). Used to drive UI-thread sheet-progress via Reanimated useEvent.
+     */
+    onSheetProgress?: (e: NativeSyntheticEvent<SheetProgressEventType>) => void;
     /**
      * A callback that gets called when the current screen will appear. This is called as soon as the transition begins.
      */

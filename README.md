@@ -1,3 +1,15 @@
+
+# 🚨🚨🚨 Readwise fork 🚨🚨🚨
+
+We have forked this. Our base branch: `readwise`. The `main` branch must remain clean. Confused? Read https://github.com/readwiseio/rekindled/blob/master/reading-clients/reader/docs/forking-a-dependency.md.
+
+## Building the library
+
+Run `yarn build` to compile the library before committing so the compiled output gets checked into git so we can install the dependency direct from GitHub.
+
+---
+
+
 <img src="https://user-images.githubusercontent.com/16062886/117443651-c13d9500-af38-11eb-888d-b6a0b580760c.png" width="100%" alt="React Native Screens by Software Mansion" >
 
 This project aims to expose native navigation container components to React Native. It is not designed to be used as a standalone library but rather as a dependency of a [full-featured navigation library](https://github.com/react-navigation/react-navigation).

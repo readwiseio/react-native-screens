@@ -40,6 +40,7 @@ import com.swmansion.rnscreens.bottomsheet.useSingleDetent
 import com.swmansion.rnscreens.bottomsheet.usesFormSheetPresentation
 import com.swmansion.rnscreens.events.HeaderHeightChangeEvent
 import com.swmansion.rnscreens.events.SheetDetentChangedEvent
+import com.swmansion.rnscreens.events.SheetProgressEvent
 import com.swmansion.rnscreens.ext.asScreenStackFragment
 import com.swmansion.rnscreens.ext.parentAsViewGroup
 import com.swmansion.rnscreens.gamma.common.FragmentProviding
@@ -736,6 +737,23 @@ class Screen(
                 id,
                 detentIndex,
                 isStable,
+            ),
+        )
+    }
+
+    // Sheet openness in [0,1] (1 = settled open). Driven each frame by the bottom sheet's onSlide
+    // callback. Mirrors dispatchTransitionProgress: the progress-based coalescing key keeps the 0/1
+    // endpoints and collapses intermediate frames so Reanimated's useEvent gets a smooth value.
+    internal fun notifySheetProgress(progress: Float) {
+        val sanitizedProgress = progress.coerceIn(0.0f, 1.0f)
+        val coalescingKey = ScreenFragment.getCoalescingKey(sanitizedProgress)
+        val surfaceId = UIManagerHelper.getSurfaceId(reactContext)
+        reactEventDispatcher?.dispatchEvent(
+            SheetProgressEvent(
+                surfaceId,
+                id,
+                sanitizedProgress,
+                coalescingKey,
             ),
         )
     }
