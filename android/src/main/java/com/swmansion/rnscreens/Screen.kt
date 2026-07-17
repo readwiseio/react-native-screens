@@ -43,6 +43,8 @@ import com.swmansion.rnscreens.events.SheetDetentChangedEvent
 import com.swmansion.rnscreens.ext.asScreenStackFragment
 import com.swmansion.rnscreens.ext.parentAsViewGroup
 import com.swmansion.rnscreens.gamma.common.FragmentProviding
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 @SuppressLint("ViewConstructor") // Only we construct this view, it is never inflated.
 class Screen(
@@ -543,32 +545,66 @@ class Screen(
                 return
             }
 
-        // Fully asynchronous: the copy is requested before the removal transaction is created
-        // (so it reads the pre-transition presented frame) but the main thread never waits on
-        // it. Completion posts back to main, which is the single owner of the install/recycle
-        // decision: install only if this removal is still live (generation) and the screen is
-        // still attached; in every other case the bitmap is dropped and the pop simply runs
-        // with today's stock behavior. Measured completion is 6-16ms — within the first
-        // animation frame — and the transition itself is never delayed.
+        // The copy is requested before the removal transaction is created, so it reads the
+        // pre-transition presented frame. The main thread waits at most ONE frame period for it
+        // (measured completion is 6-16ms, so the typical install is synchronous — which matters:
+        // the overlay must be up before the next frame can present the app's own teardown blank,
+        // or one black frame slips through). If the copy is slower, the main thread moves on and
+        // the completion posts the install instead: worst case is one frame of jank or one late
+        // frame, never a long stall and never a dropped snapshot.
+        //
+        // The install/drop decision runs exactly once, always on the main thread (`handled` is
+        // only touched there): the synchronous path claims it when the copy beats the bounded
+        // wait; otherwise the posted continuation claims it. Install only if this removal is
+        // still live (generation) and the screen attached; otherwise the bitmap is dropped.
         val requestGeneration = removalSnapshotGeneration
+        val handled = booleanArrayOf(false)
+        val latch = CountDownLatch(1)
+        val pixelCopyResult = intArrayOf(PixelCopy.ERROR_UNKNOWN)
         try {
             PixelCopy.request(window, srcRect, bitmap, { copyResult ->
+                pixelCopyResult[0] = copyResult
+                latch.countDown()
                 mainHandler.post {
-                    if (copyResult == PixelCopy.SUCCESS &&
-                        requestGeneration == removalSnapshotGeneration &&
-                        isAttachedToWindow
-                    ) {
-                        val drawable = BitmapDrawable(resources, bitmap)
-                        drawable.setBounds(0, 0, width, height)
-                        removalSnapshotDrawable = drawable
-                        overlay.add(drawable)
-                        invalidate()
-                    } else {
-                        bitmap.recycle()
+                    if (!handled[0]) {
+                        handled[0] = true
+                        installOrDropRemovalSnapshot(copyResult, bitmap, requestGeneration)
                     }
                 }
             }, snapshotHandler)
         } catch (e: IllegalArgumentException) {
+            bitmap.recycle()
+            return
+        }
+
+        val completed =
+            try {
+                latch.await(SNAPSHOT_SYNC_WAIT_MS, TimeUnit.MILLISECONDS)
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+                false
+            }
+        if (completed && !handled[0]) {
+            handled[0] = true
+            installOrDropRemovalSnapshot(pixelCopyResult[0], bitmap, requestGeneration)
+        }
+    }
+
+    private fun installOrDropRemovalSnapshot(
+        copyResult: Int,
+        bitmap: Bitmap,
+        requestGeneration: Int,
+    ) {
+        if (copyResult == PixelCopy.SUCCESS &&
+            requestGeneration == removalSnapshotGeneration &&
+            isAttachedToWindow
+        ) {
+            val drawable = BitmapDrawable(resources, bitmap)
+            drawable.setBounds(0, 0, width, height)
+            removalSnapshotDrawable = drawable
+            overlay.add(drawable)
+            invalidate()
+        } else {
             bitmap.recycle()
         }
     }
@@ -773,6 +809,10 @@ class Screen(
          * This value describes value in sheet detents array that will be treated as `fitToContents` option.
          */
         const val SHEET_FIT_TO_CONTENTS = -1.0
+
+        // One 60Hz frame period: the most the main thread will wait for a PixelCopy before
+        // handing the install to the async continuation.
+        private const val SNAPSHOT_SYNC_WAIT_MS = 17L
 
         // Shared thread PixelCopy callbacks land on; one idle thread for the process lifetime.
         private val snapshotHandler: Handler by lazy {
