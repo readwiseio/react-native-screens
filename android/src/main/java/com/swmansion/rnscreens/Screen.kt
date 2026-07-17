@@ -494,31 +494,38 @@ class Screen(
     // One capture attempt per removal: a snapshot is only valid if taken before the removal
     // transaction starts animating. If the pre-transaction attempt fails (timeout etc.), a later
     // entry point must NOT retry — it could capture an already-translated, mid-exit window.
-    // Reset alongside the snapshot itself in releaseRemovalSnapshot().
-    @Volatile
+    //
+    // Attempt state is owned by the MAIN thread and claimed only at actual capture time, so the
+    // synchronous pre-transaction call in ScreenStack.onUpdate() always wins over queued off-main
+    // requests: a queued request that runs after it no-ops on the claimed attempt.
     private var removalSnapshotAttempted: Boolean = false
 
-    // Ordering note: Fabric may call startRemovalTransition() from its mounting thread, where the
-    // capture is posted to the main looper. The ordering guarantee (capture happens before the
-    // removal transaction's animation) does not rest on that post: ScreenStack.onUpdate() invokes
-    // captureScreenSnapshotForRemoval() synchronously on the main thread immediately before it
-    // creates the removal transaction, and whichever call runs first wins the single attempt.
+    // Incremented (on main) whenever the snapshot lifecycle resets. An off-main request carries
+    // the generation it was posted under and no-ops if its removal has already been cleaned up,
+    // so a delayed post can never install an overlay into a later lifecycle.
+    @Volatile
+    private var removalSnapshotGeneration: Int = 0
+
     fun captureScreenSnapshotForRemoval() {
         if (!snapshotOnRemoval) return
-        if (removalSnapshotAttempted) return
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-        removalSnapshotAttempted = true
         if (Looper.myLooper() == Looper.getMainLooper()) {
             captureScreenSnapshotOnMain()
         } else {
-            post { captureScreenSnapshotOnMain() }
+            val requestGeneration = removalSnapshotGeneration
+            post {
+                if (requestGeneration == removalSnapshotGeneration) {
+                    captureScreenSnapshotOnMain()
+                }
+            }
         }
     }
 
     private fun captureScreenSnapshotOnMain() {
         // Recheck the opt-in: a posted capture can outlive a prop flip on a recycled screen.
         if (!snapshotOnRemoval) return
-        if (removalSnapshotBitmap != null) return
+        if (removalSnapshotAttempted) return
+        removalSnapshotAttempted = true
         if (!isAttachedToWindow || width <= 0 || height <= 0) return
         val activity = reactContext.currentActivity ?: return
         val window = activity.window
@@ -541,21 +548,22 @@ class Screen(
             }
 
         val latch = CountDownLatch(1)
-        val resultHolder = intArrayOf(PixelCopy.ERROR_UNKNOWN)
+        val pixelCopyResult = intArrayOf(PixelCopy.ERROR_UNKNOWN)
         // Bitmap ownership on timeout: PixelCopy cannot be cancelled, so the copy may still be
-        // writing into the bitmap after the bounded wait expires. Whoever finishes second (the
-        // callback, or the timed-out waiter observing the callback already ran) recycles it;
-        // recycling from the waiter while the copy is in flight would be a native UAF.
-        val loserRecycles = AtomicBoolean(false)
+        // writing into the bitmap after the bounded wait expires. Two cleanup participants exist
+        // (the PixelCopy callback and the timed-out waiter); this flag records that one of them
+        // has finished, and whichever arrives second owns recycling. Recycling from the waiter
+        // while the copy is in flight would be a native use-after-free.
+        val oneCleanupParticipantFinished = AtomicBoolean(false)
         try {
             PixelCopy.request(window, srcRect, bitmap, { copyResult ->
-                resultHolder[0] = copyResult
+                pixelCopyResult[0] = copyResult
                 latch.countDown()
-                if (loserRecycles.getAndSet(true)) {
-                    // The waiter already timed out and abandoned the bitmap — we own cleanup.
+                if (oneCleanupParticipantFinished.getAndSet(true)) {
+                    // The waiter already timed out and abandoned the bitmap — we arrive second.
                     bitmap.recycle()
                 }
-            }, snapshotHandler())
+            }, snapshotHandler)
         } catch (e: IllegalArgumentException) {
             bitmap.recycle()
             return
@@ -570,14 +578,14 @@ class Screen(
             }
 
         if (!completed) {
-            // Abandon: if the callback already finished in the meantime we recycle, otherwise
-            // the callback sees the flag and recycles when the copy completes.
-            if (loserRecycles.getAndSet(true)) {
+            // Abandon: if the callback already finished in the meantime we arrive second and
+            // recycle; otherwise the callback arrives second and recycles when the copy ends.
+            if (oneCleanupParticipantFinished.getAndSet(true)) {
                 bitmap.recycle()
             }
             return
         }
-        if (resultHolder[0] != PixelCopy.SUCCESS) {
+        if (pixelCopyResult[0] != PixelCopy.SUCCESS) {
             // Copy finished (callback ran) but failed; the bitmap is no longer being written.
             bitmap.recycle()
             return
@@ -592,6 +600,7 @@ class Screen(
     }
 
     fun releaseRemovalSnapshot() {
+        removalSnapshotGeneration++
         removalSnapshotDrawable?.let { overlay.remove(it) }
         removalSnapshotDrawable = null
         removalSnapshotBitmap = null
@@ -794,17 +803,9 @@ class Screen(
 
         private const val SNAPSHOT_TIMEOUT_MS = 50L
 
-        private var sSnapshotThread: HandlerThread? = null
-        private var sSnapshotHandler: Handler? = null
-
-        @JvmStatic
-        private fun snapshotHandler(): Handler {
-            sSnapshotHandler?.let { return it }
-            val thread = HandlerThread("RNSScreenSnapshot").also { it.start() }
-            val handler = Handler(thread.looper)
-            sSnapshotThread = thread
-            sSnapshotHandler = handler
-            return handler
+        // Shared thread PixelCopy callbacks land on; one idle thread for the process lifetime.
+        private val snapshotHandler: Handler by lazy {
+            Handler(HandlerThread("RNSScreenSnapshot").also { it.start() }.looper)
         }
     }
 }
