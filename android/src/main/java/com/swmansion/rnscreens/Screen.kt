@@ -20,9 +20,6 @@ import android.view.ViewGroup
 import android.view.WindowManager
 import android.webkit.WebView
 import android.widget.ImageView
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 import androidx.coordinatorlayout.widget.CoordinatorLayout
 import androidx.core.view.children
 import androidx.fragment.app.Fragment
@@ -46,6 +43,9 @@ import com.swmansion.rnscreens.events.SheetDetentChangedEvent
 import com.swmansion.rnscreens.ext.asScreenStackFragment
 import com.swmansion.rnscreens.ext.parentAsViewGroup
 import com.swmansion.rnscreens.gamma.common.FragmentProviding
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 @SuppressLint("ViewConstructor") // Only we construct this view, it is never inflated.
 class Screen(
@@ -491,15 +491,23 @@ class Screen(
     private var removalSnapshotBitmap: Bitmap? = null
     private var removalSnapshotDrawable: BitmapDrawable? = null
 
+    // One capture attempt per removal: a snapshot is only valid if taken before the removal
+    // transaction starts animating. If the pre-transaction attempt fails (timeout etc.), a later
+    // entry point must NOT retry — it could capture an already-translated, mid-exit window.
+    // Reset alongside the snapshot itself in releaseRemovalSnapshot().
+    @Volatile
+    private var removalSnapshotAttempted: Boolean = false
+
     // Ordering note: Fabric may call startRemovalTransition() from its mounting thread, where the
     // capture is posted to the main looper. The ordering guarantee (capture happens before the
     // removal transaction's animation) does not rest on that post: ScreenStack.onUpdate() invokes
     // captureScreenSnapshotForRemoval() synchronously on the main thread immediately before it
-    // creates the removal transaction, and whichever call runs first wins via the bitmap guard.
+    // creates the removal transaction, and whichever call runs first wins the single attempt.
     fun captureScreenSnapshotForRemoval() {
         if (!snapshotOnRemoval) return
-        if (removalSnapshotBitmap != null) return
+        if (removalSnapshotAttempted) return
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        removalSnapshotAttempted = true
         if (Looper.myLooper() == Looper.getMainLooper()) {
             captureScreenSnapshotOnMain()
         } else {
@@ -587,6 +595,7 @@ class Screen(
         removalSnapshotDrawable?.let { overlay.remove(it) }
         removalSnapshotDrawable = null
         removalSnapshotBitmap = null
+        removalSnapshotAttempted = false
     }
     // --- end screen-level removal snapshot ----------------------------------------------------
 

@@ -73,6 +73,9 @@ public class RNSScreenManagerDelegate<T extends View, U extends BaseViewManager<
       case "gestureEnabled":
         mViewManager.setGestureEnabled(view, value == null ? true : (boolean) value);
         break;
+      case "snapshotOnRemoval":
+        mViewManager.setSnapshotOnRemoval(view, value == null ? false : (boolean) value);
+        break;
       case "statusBarColor":
         mViewManager.setStatusBarColor(view, ColorPropConverter.getColor(value, view.getContext()));
         break;

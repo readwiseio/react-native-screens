@@ -32,6 +32,7 @@ public interface RNSScreenManagerInterface<T extends View>  {
   void setHomeIndicatorHidden(T view, boolean value);
   void setPreventNativeDismiss(T view, boolean value);
   void setGestureEnabled(T view, boolean value);
+  void setSnapshotOnRemoval(T view, boolean value);
   void setStatusBarColor(T view, @Nullable Integer value);
   void setStatusBarHidden(T view, boolean value);
   void setScreenOrientation(T view, @Nullable String value);
