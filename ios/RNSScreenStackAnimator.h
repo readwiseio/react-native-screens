@@ -54,19 +54,4 @@
 /// Springs the screen back to identity (cancelled drag).
 - (void)startZoomCancelSpring;
 
-#pragma mark - Modal manual drag (no interactive transition)
-
-/// Modal zoom dismissals never run as UIKit interactive transitions: the percent-
-/// driven machinery freezes the presentation container's layer clock until the
-/// transition completes, which makes every in-container animation (the commit
-/// flight) invisible until the end. Instead the drag is driven manually on the live
-/// presented view (model writes render fine), and a COMMIT runs a plain
-/// non-interactive dismissal whose animator starts from the release pose.
-///
-/// Begins the manual drag: installs the drag mask + a dim behind the screen view.
-- (void)beginManualZoomDragOnView:(nonnull UIView *)screenView;
-
-/// Cancels the manual drag: springs the view home and removes the manual dim.
-- (void)cancelManualZoomDrag;
-
 @end

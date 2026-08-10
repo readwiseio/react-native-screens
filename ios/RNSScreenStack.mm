@@ -332,10 +332,6 @@ namespace react = facebook::react;
   // Latched at zoom-drag begin: the regime must not flip mid-gesture when the book
   // finishes loading and JS updates zoomDismissEdgeOnly.
   BOOL _zoomSwipeEdgeOnly;
-  // Modal zoom drag: the pose-driving animator for the current manual drag (no
-  // interactive transition — see beginManualZoomDragOnView:). On commit it is
-  // handed to the dismissal via animationControllerForDismissedController:.
-  RNSScreenStackAnimator *_modalZoomDragAnimator;
   __weak RNSScreenStackManager *_manager;
   BOOL _updateScheduled;
 #ifdef RCT_NEW_ARCH_ENABLED
@@ -1225,55 +1221,34 @@ RNS_IGNORE_SUPER_CALL_END
 
   RNSScreenStackAnimator *animationController = _interactionController.animationController;
 
-  // Modal zoom drags never run as UIKit interactive transitions: the percent-driven
-  // machinery freezes the presentation container's layer clock until the transition
-  // completes, which made the commit flight invisible (everything snapped at the
-  // end). Instead the drag is a pure manual pose on the live presented view; COMMIT
-  // starts a plain non-interactive dismissal whose animator flies home from the
-  // release pose; CANCEL springs back with no transition at all.
+  // A modal zoom dismissal runs the same percent-driven interactive transition as a
+  // stack pop; only the call that starts it differs (dismiss vs pop).
   const BOOL isModalZoomDrag = [topScreen isPresentedAsNativeModal];
 
   switch (gestureRecognizer.state) {
     case UIGestureRecognizerStateBegan: {
-      // Never start a second pop while a transition (open, close, or another drag's
-      // completion) is still in flight — intercepting mid-animation must be inert.
-      RNSScreen *screenController = (RNSScreen *)topScreen.controller;
-      if (isModalZoomDrag) {
-        if (screenController.transitionCoordinator != nil || _modalZoomDragAnimator != nil) {
-          break;
-        }
-        RNSScreenStackAnimator *dragAnimator =
-            [[RNSScreenStackAnimator alloc] initWithOperation:UINavigationControllerOperationPop];
-        dragAnimator.modalTransition = YES;
-        [dragAnimator beginManualZoomDragOnView:topScreen];
-        _modalZoomDragAnimator = dragAnimator;
-        break;
-      }
-      if (_controller.transitionCoordinator != nil || _interactionController != nil) {
+      // Never start a second dismissal while a transition (open, close, or another
+      // drag's completion) is still in flight — intercepting mid-animation is inert.
+      UIViewController *presenter = isModalZoomDrag ? topScreen.controller : _controller;
+      if (presenter.transitionCoordinator != nil || _interactionController != nil) {
         break;
       }
       _interactionController = [RNSPercentDrivenInteractiveTransition new];
-      [_controller popViewControllerAnimated:YES];
+      if (isModalZoomDrag) {
+        [presenter dismissViewControllerAnimated:YES completion:nil];
+      } else {
+        [_controller popViewControllerAnimated:YES];
+      }
       break;
     }
 
     case UIGestureRecognizerStateChanged: {
-      if (isModalZoomDrag) {
-        [_modalZoomDragAnimator applyZoomDragPoseWithTranslation:translation progress:transitionProgress];
-        break;
-      }
       [_interactionController updateInteractiveTransition:transitionProgress];
       [animationController applyZoomDragPoseWithTranslation:translation progress:transitionProgress];
       break;
     }
 
     case UIGestureRecognizerStateCancelled: {
-      if (isModalZoomDrag) {
-        [_modalZoomDragAnimator cancelManualZoomDrag];
-        _modalZoomDragAnimator = nil;
-        _isFullWidthSwiping = NO;
-        break;
-      }
       [animationController startZoomCancelSpring];
       [_interactionController cancelInteractiveTransition];
       _interactionController = nil;
@@ -1283,22 +1258,6 @@ RNS_IGNORE_SUPER_CALL_END
 
     case UIGestureRecognizerStateEnded: {
       BOOL shouldFinishTransition = dragDistance > commitDistance || dragVelocity > RNSZoomCommitVelocity;
-      if (isModalZoomDrag) {
-        if (_modalZoomDragAnimator == nil) {
-          _isFullWidthSwiping = NO;
-          break;
-        }
-        if (shouldFinishTransition) {
-          // The dismissal's animationControllerForDismissedController: hands back the
-          // drag animator, which carries the pose/mask/dim into the commit flight.
-          [(RNSScreen *)topScreen.controller dismissViewControllerAnimated:YES completion:nil];
-        } else {
-          [_modalZoomDragAnimator cancelManualZoomDrag];
-          _modalZoomDragAnimator = nil;
-        }
-        _isFullWidthSwiping = NO;
-        break;
-      }
       if (shouldFinishTransition) {
         [animationController startZoomCommitFlightFromTranslation:translation progress:transitionProgress];
         [_interactionController finishInteractiveTransition];
@@ -1374,15 +1333,6 @@ RNS_IGNORE_SUPER_CALL_END
 - (nullable id<UIViewControllerAnimatedTransitioning>)animationControllerForDismissedController:
     (UIViewController *)dismissed
 {
-  // A committing manual drag hands its pose-driving animator to the dismissal — it
-  // carries the drag mask + manual dim into the commit flight. JS-driven closes
-  // (no drag in progress) build a fresh animator for the standard delayed flight.
-  if (_modalZoomDragAnimator != nil && [dismissed isKindOfClass:[RNSScreen class]] &&
-      ((RNSScreen *)dismissed).screenView.stackAnimation == RNSScreenStackAnimationZoom) {
-    RNSScreenStackAnimator *dragAnimator = _modalZoomDragAnimator;
-    _modalZoomDragAnimator = nil;
-    return dragAnimator;
-  }
   return [self rnsZoomModalAnimatorForController:dismissed operation:UINavigationControllerOperationPop];
 }
 

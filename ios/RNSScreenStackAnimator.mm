@@ -421,9 +421,6 @@ static void RNSZoomAddPageFadeRamp(UIView *view, NSTimeInterval duration, NSTime
   // Destination cover inside the pushed reader screen: hidden during the open flight
   // (the flying card is the only visible cover) and revealed atomically at landing.
   __weak UIView *_zoomDestCoverView;
-  // Modal manual drag: the dim inserted behind the presented screen while the finger
-  // drives the pose with NO transition running (see beginManualZoomDragOnView:).
-  UIView *_Nullable _zoomManualDim;
 }
 
 - (instancetype)initWithOperation:(UINavigationControllerOperation)operation
@@ -1408,117 +1405,6 @@ static void RNSZoomCompleteTransition(
 
   __weak RNSScreenStackAnimator *weakSelf = self;
 
-  // Modal manual-drag commit: the page already sits at the release pose (the drag is
-  // driven with model writes, no transition). This dismissal is plain non-interactive
-  // (nothing freezes the container clock), so the commit flight can run here exactly
-  // like the stack's interactive commit: stand-in materialises embedded in the
-  // shrunken page and flies home while the page fades in place.
-  if (_modalTransition && !CGAffineTransformIsIdentity(animatedView.transform)) {
-    const CGAffineTransform releaseTransform = animatedView.transform;
-    const CGFloat pageScale = releaseTransform.a;
-    const CGFloat dragTX = releaseTransform.tx;
-    const CGFloat dragTY = releaseTransform.ty;
-
-    UIView *standIn = nil;
-    if (cardView != nil) {
-      // Mid-load closes still have the reader's cover mounted — render it into the
-      // stand-in so the flight starts sharp (same as the other close paths).
-      UIView *destCover = RNSZoomFindViewByNativeID(animatedView, RNSZoomDestCoverNativeID, 0);
-      standIn = [self zoomMakeStandInFromCardView:cardView destCover:destCover inContainer:container];
-    }
-    // Hand the dim over: the manual drag's dim swaps for the transition's dim at the
-    // same alpha in the same transaction — pixel-identical.
-    [UIView performWithoutAnimation:^{
-      UIView *manualDim = self->_zoomManualDim;
-      self->_zoomManualDim = nil;
-      [manualDim removeFromSuperview];
-    }];
-
-    RNSScreenView *screenForTiming = _animatedScreen;
-    CALayer *dragMask = _zoomMaskLayer;
-
-    if (standIn != nil) {
-      const RNSZoomCardGeometry g = _zoomCardGeometry;
-      const CGRect pageBounds = animatedView.bounds;
-      const CGFloat screenMidX = CGRectGetMidX(pageBounds);
-      const CGFloat screenMidY = CGRectGetMidY(pageBounds);
-      const CGFloat embeddedMidX = screenMidX + pageScale * (CGRectGetMidX(g.alignmentRect) - screenMidX) + dragTX;
-      const CGFloat embeddedMidY = screenMidY + pageScale * (CGRectGetMidY(g.alignmentRect) - screenMidY) + dragTY;
-      const RNSZoomPose releasePose = {
-          pageScale, embeddedMidX - CGRectGetMidX(g.alignmentRect), embeddedMidY - CGRectGetMidY(g.alignmentRect)};
-      const RNSZoomPose slot = RNSZoomSlotPoseForGeometry(g);
-      RNSZoomHoldOpacity(cardView, 0);
-      [UIView performWithoutAnimation:^{
-        standIn.alpha = 0.0;
-        standIn.transform = RNSZoomArcLerpTransform(releasePose, slot, 0);
-      }];
-
-      const CGFloat revealFraction = MIN(
-          RNSZoomDuration(screenForTiming.zoomCommitRevealMs, RNSZoomCommitRevealDuration) / MAX(duration, 0.01), 1.0);
-      RNSZoomAddPageFadeRamp(
-          animatedView, duration, RNSZoomDuration(screenForTiming.zoomClosePageFadeMs, RNSZoomClosePageFadeDuration));
-      _zoomRampedView = animatedView;
-
-      UIViewPropertyAnimator *animator = [[UIViewPropertyAnimator alloc] initWithDuration:duration
-                                                                                    curve:UIViewAnimationCurveLinear
-                                                                               animations:nil];
-      const CGFloat overshoot = RNSZoomOvershoot(screenForTiming.zoomCloseOvershoot);
-      [animator addAnimations:^{
-        RNSZoomAddFlightKeyframes(standIn, revealFraction, ^(CGFloat t) {
-          const CGFloat cp = RNSZoomCloseEasing(t, overshoot);
-          standIn.transform = RNSZoomArcLerpTransform(releasePose, slot, cp);
-          dimmingView.alpha = RNSZoomDimAlphaAt(cp);
-        });
-      }];
-      [animator addCompletion:^(UIViewAnimatingPosition finalPosition) {
-        RNSScreenStackAnimator *strongSelf = weakSelf;
-        if (dragMask != nil && animatedView.layer.mask == dragMask) {
-          animatedView.layer.mask = nil;
-        }
-        if (strongSelf != nil && strongSelf->_zoomMaskLayer == dragMask) {
-          strongSelf->_zoomMaskLayer = nil;
-        }
-        animatedView.transform = CGAffineTransformIdentity;
-        RNSZoomCompleteTransition(strongSelf, transitionContext, animatedView, dimmingView, 1.0);
-      }];
-      _inFlightAnimator = animator;
-      [animator startAnimation];
-      return;
-    }
-
-    // No stand-in: fly the masked page home from the release pose (mirrors the
-    // interactive commit's fallback).
-    [self zoomRestoreSessionHiddenCardIn:toView];
-    const RNSZoomScreenGeometry sg = _zoomScreenGeometry;
-    const RNSZoomPose releasePagePose = {pageScale, dragTX, dragTY};
-    const RNSZoomPose shelfPose = {sg.shelfScale, sg.shelfTX, sg.shelfTY};
-    UIViewPropertyAnimator *animator = [[UIViewPropertyAnimator alloc] initWithDuration:duration
-                                                                                  curve:UIViewAnimationCurveLinear
-                                                                             animations:nil];
-    const CGFloat overshoot = RNSZoomOvershoot(screenForTiming.zoomCloseOvershoot);
-    [animator addAnimations:^{
-      RNSZoomAddFlightKeyframes(nil, 0, ^(CGFloat t) {
-        const CGFloat cp = RNSZoomCloseEasing(t, overshoot);
-        animatedView.transform = RNSZoomArcLerpTransform(releasePagePose, shelfPose, cp);
-        dimmingView.alpha = RNSZoomDimAlphaAt(cp);
-      });
-    }];
-    [animator addCompletion:^(UIViewAnimatingPosition finalPosition) {
-      RNSScreenStackAnimator *strongSelf = weakSelf;
-      if (dragMask != nil && animatedView.layer.mask == dragMask) {
-        animatedView.layer.mask = nil;
-      }
-      if (strongSelf != nil && strongSelf->_zoomMaskLayer == dragMask) {
-        strongSelf->_zoomMaskLayer = nil;
-      }
-      animatedView.transform = CGAffineTransformIdentity;
-      RNSZoomCompleteTransition(strongSelf, transitionContext, animatedView, dimmingView, 1.0);
-    }];
-    _inFlightAnimator = animator;
-    [animator startAnimation];
-    return;
-  }
-
   if (transitionContext.isInteractive) {
     // Interactive drag: the gesture drives the page pose manually (see
     // applyZoomDragPose…); this animator only carries the UIKit transition progress,
@@ -1735,6 +1621,25 @@ static void RNSZoomCompleteTransition(
   [CATransaction commit];
 }
 
+// A percent-driven transition parks its container's layer clock (speed 0, scrubbed
+// timeOffset). Model writes still render — that is why the drag pose works — but
+// animations added while it is parked do not play. A nav pop restarts the clock at
+// finishInteractiveTransition, before the commit flight commits. An over-full-screen
+// modal keeps it parked until completeTransition:, which the flight itself only calls
+// once it lands, so the flight would run invisibly and snap at the end. Restart the
+// clock at release instead.
+static void RNSZoomRestartLayerClock(CALayer *_Nullable layer)
+{
+  if (layer == nil || layer.speed != 0) {
+    return;
+  }
+  const CFTimeInterval pausedAt = layer.timeOffset;
+  layer.speed = 1;
+  layer.timeOffset = 0;
+  layer.beginTime = 0;
+  layer.beginTime = [layer convertTime:CACurrentMediaTime() fromLayer:nil] - pausedAt;
+}
+
 // Commit: a snapshot stand-in of the cover materialises embedded in the shrunken
 // page's cover position (closeInteractiveStyle) and flies home along the arc while
 // the page fades out in place; the real card's alpha is restored at landing. Falls
@@ -1749,6 +1654,9 @@ static void RNSZoomCompleteTransition(
   _zoomPendingCardView = nil;
   if (animatedView == nil) {
     return;
+  }
+  if (_modalTransition) {
+    RNSZoomRestartLayerClock(animatedView.superview.layer);
   }
 
   // The card captured at drag-begin can be recycled away mid-gesture (the shelf
@@ -1864,6 +1772,9 @@ static void RNSZoomCompleteTransition(
   if (animatedView == nil) {
     return;
   }
+  if (_modalTransition) {
+    RNSZoomRestartLayerClock(animatedView.superview.layer);
+  }
   const NSTimeInterval springDuration = [self zoomCancelSpringDuration];
   [UIView animateWithDuration:springDuration
                         delay:0
@@ -1886,53 +1797,6 @@ static void RNSZoomCompleteTransition(
     [CATransaction commit];
     [maskLayer addAnimation:radiusAnimation forKey:@"rns-zoom-cancel-radius"];
   }
-}
-
-#pragma mark - Modal manual drag (no interactive transition)
-
-- (void)beginManualZoomDragOnView:(UIView *)screenView
-{
-  _zoomAnimatedView = screenView;
-  // A lingering cancel-spring from a previous grab must not fight the new drag.
-  [screenView.layer removeAllAnimations];
-  CALayer *dragMaskLayer = [CALayer layer];
-  dragMaskLayer.backgroundColor = UIColor.blackColor.CGColor;
-  dragMaskLayer.cornerCurve = kCACornerCurveContinuous;
-  dragMaskLayer.cornerRadius = RNSZoomBaseReaderRadius;
-  dragMaskLayer.frame = screenView.layer.bounds;
-  _zoomMaskLayer = dragMaskLayer;
-  screenView.layer.mask = dragMaskLayer;
-
-  // No transition is running, so there is no transition dim — install our own
-  // behind the screen (over the live sheet below). Model write: renders immediately.
-  UIView *dim = [[UIView alloc] initWithFrame:screenView.superview.bounds];
-  dim.backgroundColor = [UIColor blackColor];
-  dim.userInteractionEnabled = NO;
-  [UIView performWithoutAnimation:^{
-    dim.alpha = RNSZoomDimMaxAlpha;
-  }];
-  [screenView.superview insertSubview:dim belowSubview:screenView];
-  _zoomManualDim = dim;
-}
-
-- (void)cancelManualZoomDrag
-{
-  [self startZoomCancelSpring];
-  UIView *dim = _zoomManualDim;
-  _zoomManualDim = nil;
-  UIView *screenView = _zoomAnimatedView;
-  CALayer *maskLayer = _zoomMaskLayer;
-  // The spring returns the reader to fullscreen (opaque, covering the dim); remove
-  // the dim + mask once it settles.
-  dispatch_after(
-      dispatch_time(DISPATCH_TIME_NOW, (int64_t)([self zoomCancelSpringDuration] * NSEC_PER_SEC)),
-      dispatch_get_main_queue(),
-      ^{
-        [dim removeFromSuperview];
-        if (maskLayer != nil && screenView.layer.mask == maskLayer) {
-          screenView.layer.mask = nil;
-        }
-      });
 }
 
 - (void)animateWithNoAnimation:(id<UIViewControllerContextTransitioning>)transitionContext
