@@ -111,6 +111,9 @@ namespace react = facebook::react;
 // Back-easing coefficient for the close landing's squash-and-recover bounce
 // (unitless, not ms); non-positive keeps the built-in default (1.1).
 @property (nonatomic) CGFloat zoomCloseOvershoot;
+// Scale applied to the flying cover's rasterised contents about its centre, matching
+// a card whose image is zoomed inside a clipping box; non-positive means 1 (no scale).
+@property (nonatomic) CGFloat zoomCoverScale;
 // Paints the zoom debug borders (red = flying stand-in, blue = real card) for this
 // screen's transitions at runtime — no rebuild needed, unlike RNSZoomDebugEnabled.
 @property (nonatomic) BOOL zoomShowDebugBorders;

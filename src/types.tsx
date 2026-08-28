@@ -263,6 +263,14 @@ export interface ScreenProps extends ViewProps {
    */
   zoomCloseOvershoot?: number;
   /**
+   * Readwise: scale applied to the flying cover's rasterised contents, about its
+   * centre. Matches a cover whose own image is zoomed inside a clipping box (e.g. to
+   * hide a publisher keyline) so the flight and the card agree. Non-positive means 1.
+   *
+   * @platform ios
+   */
+  zoomCoverScale?: number;
+  /**
    * Readwise: paints the zoom debug borders (red = flying stand-in, blue = real card)
    * for this screen's transitions — the runtime switch for the debug borders only;
    * the native RNSZoomDebugEnabled compile switch additionally gates logging and

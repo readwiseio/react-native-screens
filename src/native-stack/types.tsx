@@ -246,6 +246,13 @@ export type NativeStackNavigationOptions = {
    */
   zoomCloseOvershoot?: ScreenProps['zoomCloseOvershoot'];
   /**
+   * Readwise: scale applied to the flying cover's rasterised contents, about its
+   * centre, so the flight matches a card whose image is zoomed inside a clipping box.
+   *
+   * @platform ios
+   */
+  zoomCoverScale?: ScreenProps['zoomCoverScale'];
+  /**
    * Readwise: paints the zoom debug borders for this screen's transitions at runtime.
    *
    * @platform ios
