@@ -221,6 +221,7 @@ const RouteView = ({
     zoomCommitRevealMs = 0,
     zoomCancelSpringMs = 0,
     zoomCloseOvershoot = 0,
+    zoomCoverScale = 0,
     zoomShowDebugBorders = false,
     nativeBackButtonDismissalEnabled = false,
     navigationBarColor,
@@ -367,6 +368,7 @@ const RouteView = ({
       zoomCommitRevealMs={zoomCommitRevealMs}
       zoomCancelSpringMs={zoomCancelSpringMs}
       zoomCloseOvershoot={zoomCloseOvershoot}
+      zoomCoverScale={zoomCoverScale}
       zoomShowDebugBorders={zoomShowDebugBorders}
       nativeBackButtonDismissalEnabled={nativeBackButtonDismissalEnabled}
       navigationBarColor={navigationBarColor}

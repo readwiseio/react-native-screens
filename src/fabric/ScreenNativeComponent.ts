@@ -126,6 +126,7 @@ export interface NativeProps extends ViewProps {
   zoomCommitRevealMs?: WithDefault<Float, 0.0>;
   zoomCancelSpringMs?: WithDefault<Float, 0.0>;
   zoomCloseOvershoot?: WithDefault<Float, 0.0>;
+  zoomCoverScale?: WithDefault<Float, 0.0>;
   zoomShowDebugBorders?: WithDefault<boolean, false>;
   stackPresentation?: WithDefault<StackPresentation, 'push'>;
   stackAnimation?: WithDefault<StackAnimation, 'default'>;

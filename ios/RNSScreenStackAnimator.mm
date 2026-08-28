@@ -177,6 +177,13 @@ static inline CGFloat RNSZoomOvershoot(CGFloat override)
   return override > 0 ? override : RNSZoomCloseOvershoot;
 }
 
+// Per-screen zoom applied to the flying cover's rasterised contents; non-positive
+// means no zoom.
+static inline CGFloat RNSZoomCoverScale(CGFloat override)
+{
+  return override > 0 ? override : 1;
+}
+
 // Geometry for the card flight: a snapshot stand-in of the cover (the real card is
 // never reparented — Fabric owns it; see zoomMakeStandInFromCardView) flies between
 // the slot rect and the alignment rect.
@@ -1056,7 +1063,16 @@ static void RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
     format.opaque = NO;
     const CGRect canvas = CGRectMake(0, 0, alignmentRect.size.width, alignmentRect.size.height);
     UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithBounds:canvas format:format];
+    const CGFloat coverScale = RNSZoomCoverScale(_animatedScreen.zoomCoverScale);
     UIImage *cardImage = [renderer imageWithActions:^(UIGraphicsImageRendererContext *context) {
+      // The card zooms its own image inside a clipping box (a keyline hider); the
+      // raster is flat, so the same zoom is re-applied here about the canvas centre.
+      if (coverScale != 1) {
+        CGContextRef ctx = context.CGContext;
+        CGContextTranslateCTM(ctx, CGRectGetMidX(canvas), CGRectGetMidY(canvas));
+        CGContextScaleCTM(ctx, coverScale, coverScale);
+        CGContextTranslateCTM(ctx, -CGRectGetMidX(canvas), -CGRectGetMidY(canvas));
+      }
       // Base: the card wrapper positioned so its slot rect fills the canvas exactly.
       const CGFloat k = canvas.size.width / slotRect.size.width;
       const CGRect baseRect = CGRectMake(
