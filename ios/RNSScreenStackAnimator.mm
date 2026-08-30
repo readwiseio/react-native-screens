@@ -316,6 +316,29 @@ static const float RNSZoomDebugAnimationSpeed = 1.0;
 static NSString *const RNSZoomOpacityHoldKey = @"RNSZoomOpacityHold";
 static NSString *const RNSZoomOpacityRampKey = @"RNSZoomOpacityRamp";
 
+// JS zoom rects come from Fabric measureInWindow, which sums SHADOW-tree layout — a
+// natively PRESENTED screen (the bookstore pageSheet) sits at (0,0) in the shadow
+// tree while UIKit offsets its view (~62pt sheet inset), so every rect measured
+// inside it is short by that offset. Re-anchor by the card's hosting RNSScreenView's
+// true window origin. Stack screens sit at (0,0) in the window, so this is an exact
+// no-op for the shipped shelf flights; without a card (masked fallback) the rect is
+// left as-is.
+static CGRect RNSZoomCorrectSourceRectForCard(CGRect sourceRectInWindow, UIView *_Nullable cardView)
+{
+  if (cardView == nil || CGRectIsNull(sourceRectInWindow)) {
+    return sourceRectInWindow;
+  }
+  UIView *screenAncestor = cardView.superview;
+  while (screenAncestor != nil && ![screenAncestor isKindOfClass:[RNSScreenView class]]) {
+    screenAncestor = screenAncestor.superview;
+  }
+  if (screenAncestor == nil || screenAncestor.window == nil) {
+    return sourceRectInWindow;
+  }
+  const CGPoint anchor = [screenAncestor convertPoint:CGPointZero toView:nil];
+  return CGRectOffset(sourceRectInWindow, anchor.x, anchor.y);
+}
+
 // Fabric owns the model opacity of the screen/card/cover views and can rewrite it on
 // any commit mid-flight (a cached cover's onLoad commits within the first frames of
 // the push — the reader then flashed in at full alpha). Holding/ramping the
@@ -449,7 +472,11 @@ static void RNSZoomAddPageFadeRamp(UIView *view, NSTimeInterval duration, NSTime
   UIViewController *toViewController = [transitionContext viewControllerForKey:UITransitionContextToViewControllerKey];
   UIViewController *fromViewController =
       [transitionContext viewControllerForKey:UITransitionContextFromViewControllerKey];
-  toViewController.view.frame = [transitionContext finalFrameForViewController:toViewController];
+  // Modal dismiss: toVC is the presenting VC (e.g. a pageSheet) whose view stayed in
+  // place — its frame is owned by its own presentation, don't touch it.
+  if (!(_modalTransition && _operation == UINavigationControllerOperationPop)) {
+    toViewController.view.frame = [transitionContext finalFrameForViewController:toViewController];
+  }
 
   RNSScreenView *screen;
   if (_operation == UINavigationControllerOperationPush) {
@@ -733,7 +760,11 @@ static void RNSZoomAddPageFadeRamp(UIView *view, NSTimeInterval duration, NSTime
     _inFlightAnimator = animator;
     [animator startAnimation];
   } else if (_operation == UINavigationControllerOperationPop) {
-    [[transitionContext containerView] insertSubview:toViewController.view belowSubview:fromViewController.view];
+    // Modal dismiss: the presenting view never left the window — don't reparent it
+    // into the transition container (UIKit would not put it back).
+    if (!_modalTransition) {
+      [[transitionContext containerView] insertSubview:toViewController.view belowSubview:fromViewController.view];
+    }
     auto animator = [[UIViewPropertyAnimator alloc] initWithDuration:[self transitionDuration:transitionContext]
                                                                curve:UIViewAnimationCurveEaseInOut
                                                           animations:^{
@@ -1198,6 +1229,19 @@ static void RNSZoomCompleteTransition(
     belowView = toViewController.view;
   }
 
+  if (_modalTransition && [self zoomFindSourceCardIn:belowView] == nil) {
+    // Modal transitions: UIKit may hand us a context-root VC as the from/to side
+    // whose view doesn't contain the presenting sheet. The presented screen's
+    // presentingViewController is the sheet that actually hosts the card.
+    UIViewController *presented =
+        _operation == UINavigationControllerOperationPush ? toViewController : fromViewController;
+    UIView *presentingView = presented.presentingViewController.view;
+    if (presentingView != nil && [self zoomFindSourceCardIn:presentingView] != nil) {
+      belowView = presentingView;
+    }
+  }
+  UIView *modalSourceCard = _modalTransition ? [self zoomFindSourceCardIn:belowView] : nil;
+
   UIView *container = transitionContext.containerView;
   if (RNSZoomDebugEnabled && RNSZoomDebugAnimationSpeed != 1.0f) {
     container.layer.speed = RNSZoomDebugAnimationSpeed;
@@ -1206,6 +1250,7 @@ static void RNSZoomCompleteTransition(
   }
   CGRect sourceRectInWindow = RNSZoomRectFromDictionary(screen.zoomSourceRect);
   CGRect alignmentRect = RNSZoomRectFromDictionary(screen.zoomAlignmentRect);
+  sourceRectInWindow = RNSZoomCorrectSourceRectForCard(sourceRectInWindow, modalSourceCard);
 
   if (CGRectIsNull(sourceRectInWindow) || CGRectIsNull(alignmentRect)) {
     // Without valid rects there is nothing to zoom from/to — degrade to a fade. On a
@@ -1258,9 +1303,11 @@ static void RNSZoomCompleteTransition(
                             cardView:cardView
                             duration:duration];
   } else if (_operation == UINavigationControllerOperationPop) {
+    // belowView, not toViewController.view: identical for stack pops; for modal
+    // dismissals it's the resolved presenting (card-hosting) view.
     [self animateZoomPopWithContext:transitionContext
                        animatedView:animatedView
-                             toView:toViewController.view
+                             toView:belowView
                            cardView:cardView
                            duration:duration];
   }
@@ -1359,9 +1406,15 @@ static void RNSZoomCompleteTransition(
   // Tracked so animationEnded:'s backstop can remove it on an abnormal teardown.
   _zoomDimmingView = dimmingView;
 
+  const BOOL modalTransition = _modalTransition;
   [UIView performWithoutAnimation:^{
-    toView.transform = CGAffineTransformIdentity;
-    [container insertSubview:toView belowSubview:animatedView];
+    // Modal dismiss: the presenting view (sheet) is still live in the window below
+    // the presentation container — reparenting it would orphan it after the
+    // transition. Only the dimming layer joins the container.
+    if (!modalTransition) {
+      toView.transform = CGAffineTransformIdentity;
+      [container insertSubview:toView belowSubview:animatedView];
+    }
     [container insertSubview:dimmingView belowSubview:animatedView];
     dimmingView.alpha = RNSZoomDimMaxAlpha;
   }];
@@ -1584,6 +1637,25 @@ static void RNSZoomCompleteTransition(
   [CATransaction commit];
 }
 
+// A percent-driven transition parks its container's layer clock (speed 0, scrubbed
+// timeOffset). Model writes still render — that is why the drag pose works — but
+// animations added while it is parked do not play. A nav pop restarts the clock at
+// finishInteractiveTransition, before the commit flight commits. An over-full-screen
+// modal keeps it parked until completeTransition:, which the flight itself only calls
+// once it lands, so the flight would run invisibly and snap at the end. Restart the
+// clock at release instead.
+static void RNSZoomRestartLayerClock(CALayer *_Nullable layer)
+{
+  if (layer == nil || layer.speed != 0) {
+    return;
+  }
+  const CFTimeInterval pausedAt = layer.timeOffset;
+  layer.speed = 1;
+  layer.timeOffset = 0;
+  layer.beginTime = 0;
+  layer.beginTime = [layer convertTime:CACurrentMediaTime() fromLayer:nil] - pausedAt;
+}
+
 // Commit: a snapshot stand-in of the cover materialises embedded in the shrunken
 // page's cover position (closeInteractiveStyle) and flies home along the arc while
 // the page fades out in place; the real card's alpha is restored at landing. Falls
@@ -1599,6 +1671,9 @@ static void RNSZoomCompleteTransition(
   if (animatedView == nil) {
     return;
   }
+  if (_modalTransition) {
+    RNSZoomRestartLayerClock(animatedView.superview.layer);
+  }
 
   // The card captured at drag-begin can be recycled away mid-gesture (the shelf
   // re-renders when the book finishes loading). Re-find it by the screen's CURRENT
@@ -1612,6 +1687,9 @@ static void RNSZoomCompleteTransition(
   if (cardView != nil && screen != nil && animatedView.superview != nil) {
     CGRect sourceRectInWindow = RNSZoomRectFromDictionary(screen.zoomSourceRect);
     CGRect alignmentRect = RNSZoomRectFromDictionary(screen.zoomAlignmentRect);
+    if (_modalTransition) {
+      sourceRectInWindow = RNSZoomCorrectSourceRectForCard(sourceRectInWindow, cardView);
+    }
     if (!CGRectIsNull(sourceRectInWindow) && !CGRectIsNull(alignmentRect)) {
       _zoomCardGeometry.slotRect = [animatedView.superview convertRect:sourceRectInWindow fromView:nil];
       _zoomCardGeometry.alignmentRect = alignmentRect;
@@ -1709,6 +1787,9 @@ static void RNSZoomCompleteTransition(
   _zoomPendingCardView = nil;
   if (animatedView == nil) {
     return;
+  }
+  if (_modalTransition) {
+    RNSZoomRestartLayerClock(animatedView.superview.layer);
   }
   const NSTimeInterval springDuration = [self zoomCancelSpringDuration];
   [UIView animateWithDuration:springDuration

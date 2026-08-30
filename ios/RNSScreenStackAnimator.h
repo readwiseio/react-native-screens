@@ -9,6 +9,12 @@
 
 - (nonnull instancetype)initWithOperation:(UINavigationControllerOperation)operation;
 
+/// YES when this animator drives a MODAL present/dismiss (zoom over a sheet) instead
+/// of a navigation push/pop. Modal transitions must not reparent the presenting view:
+/// with an over-full-screen presentation it never leaves the window, so the pop-side
+/// `insertSubview:toView` / frame writes are skipped.
+@property (nonatomic) BOOL modalTransition;
+
 /// In case of interactive / interruptible transition (e.g. swipe back gesture) this method should return
 /// timing parameters expected by animator to be used for animation completion (e.g. when user's
 /// gesture had ended).
