@@ -239,6 +239,9 @@ static CGAffineTransform RNSZoomArcLerpTransform(RNSZoomPose from, RNSZoomPose t
 // snapshot (only the pure cover flies).
 static NSString *const RNSZoomDestCoverNativeID = @"RNSZoomDestCover";
 static NSString *const RNSZoomCoverBadgeNativeID = @"RNSZoomCoverBadge";
+// CoverLighting = the JS spine/edge gradient overlay; excluded from the raster and
+// re-drawn as CAGradientLayers on the stand-in (see RNSZoomApplyCoverLighting).
+static NSString *const RNSZoomCoverLightingNativeID = @"RNSZoomCoverLighting";
 
 // Fabric-only assumption: the nativeID prop lands on RCTViewComponentView's `nativeId`
 // selector (duck-typed — no compile-time dependency on non-public RN headers), with
@@ -1039,6 +1042,89 @@ static void RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
   CGContextRestoreGState(ctx);
 }
 
+static CAGradientLayer *RNSZoomGradientLayer(NSArray *colorInts, NSArray *locations, CGPoint start, CGPoint end, CGRect frame)
+{
+  CAGradientLayer *layer = [CAGradientLayer layer];
+  NSMutableArray *colors = [NSMutableArray arrayWithCapacity:colorInts.count];
+  for (NSNumber *num in colorInts) {
+    const uint32_t v = (uint32_t)num.unsignedIntValue;
+    [colors addObject:(__bridge id)[UIColor colorWithRed:((v >> 16) & 0xFF) / 255.0
+                                                   green:((v >> 8) & 0xFF) / 255.0
+                                                    blue:(v & 0xFF) / 255.0
+                                                   alpha:((v >> 24) & 0xFF) / 255.0]
+                                       .CGColor];
+  }
+  layer.colors = colors;
+  if (locations.count == colors.count) {
+    layer.locations = locations;
+  }
+  layer.startPoint = start;
+  layer.endPoint = end;
+  layer.frame = frame;
+  return layer;
+}
+
+// Re-draws the cover lighting (spine + edge gradients) as vector layers on the flying
+// stand-in, from the JSON spec the screen carries. The JS overlay is excluded from the
+// raster: the compensation scale the cover image needs (zoomCoverScale) would otherwise
+// scale and crop gradients that were never zoomed on the real card.
+static void RNSZoomApplyCoverLighting(UIView *standIn, NSString *json)
+{
+  if (json.length == 0) {
+    return;
+  }
+  NSData *data = [json dataUsingEncoding:NSUTF8StringEncoding];
+  NSDictionary *spec = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+  if (![spec isKindOfClass:[NSDictionary class]]) {
+    return;
+  }
+  const CGSize size = standIn.bounds.size;
+  if (size.width < 1 || size.height < 1) {
+    return;
+  }
+  [CATransaction begin];
+  [CATransaction setDisableActions:YES];
+  CALayer *clip = [CALayer layer];
+  clip.frame = standIn.bounds;
+  clip.masksToBounds = YES;
+  clip.cornerRadius = [spec[@"radius"] doubleValue];
+
+  const CGFloat spineWidth =
+      MAX([spec[@"spineMinWidth"] doubleValue], size.height * [spec[@"spineWidthRatio"] doubleValue]);
+  CAGradientLayer *spine = RNSZoomGradientLayer(
+      spec[@"spineColors"],
+      spec[@"spineLocations"],
+      CGPointMake(0, 0.5),
+      CGPointMake(1, 0.5),
+      CGRectMake(0, 0, spineWidth, size.height));
+  spine.mask = RNSZoomGradientLayer(
+      spec[@"spineFadeColors"],
+      spec[@"spineFadeLocations"],
+      CGPointMake(0.5, 0),
+      CGPointMake(0.5, 1),
+      spine.bounds);
+  [clip addSublayer:spine];
+
+  const CGFloat topH = size.height * [spec[@"topEdgeHeightRatio"] doubleValue];
+  [clip addSublayer:RNSZoomGradientLayer(
+                        spec[@"topEdgeColors"],
+                        nil,
+                        CGPointMake(0.5, 0),
+                        CGPointMake(0.5, 1),
+                        CGRectMake(0, 0, size.width, topH))];
+
+  const CGFloat bottomH = size.height * [spec[@"bottomEdgeHeightRatio"] doubleValue];
+  [clip addSublayer:RNSZoomGradientLayer(
+                        spec[@"bottomEdgeColors"],
+                        nil,
+                        CGPointMake(0.5, 0),
+                        CGPointMake(0.5, 1),
+                        CGRectMake(0, size.height - bottomH, size.width, bottomH))];
+
+  [standIn.layer addSublayer:clip];
+  [CATransaction commit];
+}
+
 // Builds the flying stand-in for the cover. Its natural frame is the ALIGNMENT rect
 // (the reader pose), composited at full resolution: the card render (badges hidden,
 // mapped so its cover rect fills the canvas) as a fallback base, and the reader's own
@@ -1073,8 +1159,10 @@ static void RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
     // writes land in the same tick, so the display never sees them.
     NSMutableArray<UIView *> *badges = [NSMutableArray array];
     RNSZoomCollectViewsByNativeID(cardView, RNSZoomCoverBadgeNativeID, 0, badges);
+    RNSZoomCollectViewsByNativeID(cardView, RNSZoomCoverLightingNativeID, 0, badges);
     if (destCover != nil) {
       RNSZoomCollectViewsByNativeID(destCover, RNSZoomCoverBadgeNativeID, 0, badges);
+      RNSZoomCollectViewsByNativeID(destCover, RNSZoomCoverLightingNativeID, 0, badges);
     }
     NSMutableArray<NSNumber *> *badgeAlphas = [NSMutableArray arrayWithCapacity:badges.count];
     for (UIView *badge in badges) {
@@ -1128,6 +1216,7 @@ static void RNSZoomDrawViewIntoRect(UIView *view, CGRect destRect, UIGraphicsIma
     }
 
     standIn = [[UIImageView alloc] initWithImage:cardImage];
+    RNSZoomApplyCoverLighting(standIn, self->_animatedScreen.zoomCoverLighting);
     if (!RNSZoomDebugEnabled && !self->_animatedScreen.zoomShowDebugBorders) {
       // Borders off: drop a card border a previous debug transition left behind
       // (it lives on the Fabric-owned card and would otherwise persist until remount).

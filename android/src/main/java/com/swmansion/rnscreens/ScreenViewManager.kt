@@ -449,6 +449,11 @@ open class ScreenViewManager :
         value: Float,
     ) = Unit
 
+    override fun setZoomCoverLighting(
+        view: Screen?,
+        value: String?,
+    ) = Unit
+
     override fun setZoomShowDebugBorders(
         view: Screen?,
         value: Boolean,

@@ -271,6 +271,15 @@ export interface ScreenProps extends ViewProps {
    */
   zoomCoverScale?: number;
   /**
+   * Readwise: JSON spec of the cover lighting treatment (spine + edge gradients, corner
+   * radius) drawn natively on the zoom flight's stand-in. The JS overlay is excluded from
+   * the raster and re-rendered as CAGradientLayers, so the compensation scale that the
+   * cover image needs never distorts the gradients. Colors are processColor() ints.
+   *
+   * @platform ios
+   */
+  zoomCoverLighting?: string;
+  /**
    * Readwise: paints the zoom debug borders (red = flying stand-in, blue = real card)
    * for this screen's transitions — the runtime switch for the debug borders only;
    * the native RNSZoomDebugEnabled compile switch additionally gates logging and
