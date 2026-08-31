@@ -1097,6 +1097,7 @@ static void RNSZoomApplyCoverLighting(UIView *standIn, NSString *json)
       CGPointMake(0, 0.5),
       CGPointMake(1, 0.5),
       CGRectMake(0, 0, spineWidth, size.height));
+  spine.opacity = spec[@"spineOpacity"] != nil ? [spec[@"spineOpacity"] floatValue] : 1;
   spine.mask = RNSZoomGradientLayer(
       spec[@"spineFadeColors"],
       spec[@"spineFadeLocations"],
