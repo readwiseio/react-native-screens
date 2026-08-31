@@ -117,6 +117,9 @@ namespace react = facebook::react;
 // Paints the zoom debug borders (red = flying stand-in, blue = real card) for this
 // screen's transitions at runtime — no rebuild needed, unlike RNSZoomDebugEnabled.
 @property (nonatomic) BOOL zoomShowDebugBorders;
+// JSON cover-lighting spec (spine + edge gradients, corner radius) drawn as
+// CAGradientLayers on the flying stand-in; nil/empty means no native lighting.
+@property (nonatomic, copy, nullable) NSString *zoomCoverLighting;
 @property (nonatomic) int activityState;
 @property (nonatomic, nullable) NSString *screenId;
 @property (weak, nonatomic) UIView<RNSScreenContainerDelegate> *reactSuperview;

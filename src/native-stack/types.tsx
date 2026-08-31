@@ -253,6 +253,12 @@ export type NativeStackNavigationOptions = {
    */
   zoomCoverScale?: ScreenProps['zoomCoverScale'];
   /**
+   * Readwise: JSON cover-lighting spec drawn natively on the zoom stand-in.
+   *
+   * @platform ios
+   */
+  zoomCoverLighting?: ScreenProps['zoomCoverLighting'];
+  /**
    * Readwise: paints the zoom debug borders for this screen's transitions at runtime.
    *
    * @platform ios

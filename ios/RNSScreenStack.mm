@@ -671,6 +671,21 @@ RNS_IGNORE_SUPER_CALL_END
       // like date picker or segmented control.
       next.overrideUserInterfaceStyle = self->_controller.overrideUserInterfaceStyle;
 
+#if !TARGET_OS_TV && !TARGET_OS_VISION
+      // Readwise: a modal screen with the zoom animation (reader presented over the
+      // bookstore sheet) runs the cover-zoom via a custom modal transition instead of
+      // the default cover-vertical. The pan recognizer drives the interactive dismiss
+      // (the stack's own recognizers can't see touches on a presented modal).
+      if ([next isKindOfClass:[RNSScreen class]] &&
+          ((RNSScreen *)next).screenView.stackAnimation == RNSScreenStackAnimationZoom) {
+        next.transitioningDelegate = self;
+        // Over-full-screen styles don't capture status bar appearance by default;
+        // without this the reader's statusBarHidden option is ignored.
+        next.modalPresentationCapturesStatusBarAppearance = YES;
+        [self attachModalZoomDismissRecognizerToScreen:(RNSScreen *)next];
+      }
+#endif // !TARGET_OS_TV && !TARGET_OS_VISION
+
       BOOL shouldAnimate = lastModal && [next isKindOfClass:[RNSScreen class]] &&
           ((RNSScreen *)next).screenView.stackAnimation != RNSScreenStackAnimationNone;
 
@@ -1003,6 +1018,13 @@ RNS_IGNORE_SUPER_CALL_END
   [self cancelTouchesInParent];
   return YES;
 #else
+  // A recognizer attached to a presented modal zoom screen gates against THAT
+  // screen, not the stack's top react subview (they usually coincide, but the
+  // recognizer's own screen is authoritative).
+  RNSScreenView *modalZoomScreen = [self rnsModalZoomScreenForRecognizer:gestureRecognizer];
+  if (modalZoomScreen != nil) {
+    topScreen = modalZoomScreen;
+  }
   // RNSPanGestureRecognizer will receive events iff topScreen.fullScreenSwipeEnabled == YES;
   // Events are filtered in gestureRecognizer:shouldReceivePressOrTouchEvent: method
   if ([gestureRecognizer isKindOfClass:[RNSPanGestureRecognizer class]]) {
@@ -1026,6 +1048,11 @@ RNS_IGNORE_SUPER_CALL_END
     if ([self isInGestureResponseDistance:gestureRecognizer topScreen:topScreen]) {
       _isFullWidthSwiping = YES;
       [self cancelTouchesInParent];
+      if (modalZoomScreen != nil) {
+        // A presented modal owns its own RN touch handler (attached to the screen
+        // view, not the stack) — cancel it too or touchables stay pressed.
+        [[modalZoomScreen rnscreens_findTouchHandlerInAncestorChain] rnscreens_cancelTouches];
+      }
       return YES;
     }
     return NO;
@@ -1086,7 +1113,8 @@ RNS_IGNORE_SUPER_CALL_END
 
 - (void)handleSwipe:(UIPanGestureRecognizer *)gestureRecognizer
 {
-  RNSScreenView *topScreen = _reactSubviews.lastObject;
+  RNSScreenView *modalZoomScreen = [self rnsModalZoomScreenForRecognizer:gestureRecognizer];
+  RNSScreenView *topScreen = modalZoomScreen ?: _reactSubviews.lastObject;
 
   if (topScreen.stackAnimation == RNSScreenStackAnimationZoom) {
     [self handleZoomSwipe:gestureRecognizer topScreen:topScreen];
@@ -1193,15 +1221,24 @@ RNS_IGNORE_SUPER_CALL_END
 
   RNSScreenStackAnimator *animationController = _interactionController.animationController;
 
+  // A modal zoom dismissal runs the same percent-driven interactive transition as a
+  // stack pop; only the call that starts it differs (dismiss vs pop).
+  const BOOL isModalZoomDrag = [topScreen isPresentedAsNativeModal];
+
   switch (gestureRecognizer.state) {
     case UIGestureRecognizerStateBegan: {
-      // Never start a second pop while a transition (open, close, or another drag's
-      // completion) is still in flight — intercepting mid-animation must be inert.
-      if (_controller.transitionCoordinator != nil || _interactionController != nil) {
+      // Never start a second dismissal while a transition (open, close, or another
+      // drag's completion) is still in flight — intercepting mid-animation is inert.
+      UIViewController *presenter = isModalZoomDrag ? topScreen.controller : _controller;
+      if (presenter.transitionCoordinator != nil || _interactionController != nil) {
         break;
       }
       _interactionController = [RNSPercentDrivenInteractiveTransition new];
-      [_controller popViewControllerAnimated:YES];
+      if (isModalZoomDrag) {
+        [presenter dismissViewControllerAnimated:YES completion:nil];
+      } else {
+        [_controller popViewControllerAnimated:YES];
+      }
       break;
     }
 
@@ -1269,9 +1306,73 @@ RNS_IGNORE_SUPER_CALL_END
   return _interactionController;
 }
 
+#pragma mark - Modal zoom transition (Readwise)
+
+// The reader presented over the bookstore sheet: same zoom animator as the stack
+// push/pop, driven through the modal transitioning delegate instead.
+- (nullable RNSScreenStackAnimator *)rnsZoomModalAnimatorForController:(UIViewController *)controller
+                                                             operation:(UINavigationControllerOperation)operation
+{
+  if (![controller isKindOfClass:[RNSScreen class]] ||
+      ((RNSScreen *)controller).screenView.stackAnimation != RNSScreenStackAnimationZoom) {
+    return nil; // default UIKit modal transition
+  }
+  RNSScreenStackAnimator *animator = [[RNSScreenStackAnimator alloc] initWithOperation:operation];
+  animator.modalTransition = YES;
+  return animator;
+}
+
+- (nullable id<UIViewControllerAnimatedTransitioning>)
+    animationControllerForPresentedController:(UIViewController *)presented
+                         presentingController:(UIViewController *)presenting
+                             sourceController:(UIViewController *)source
+{
+  return [self rnsZoomModalAnimatorForController:presented operation:UINavigationControllerOperationPush];
+}
+
+- (nullable id<UIViewControllerAnimatedTransitioning>)animationControllerForDismissedController:
+    (UIViewController *)dismissed
+{
+  return [self rnsZoomModalAnimatorForController:dismissed operation:UINavigationControllerOperationPop];
+}
+
+// Returns the presented modal zoom screen when the recognizer is the one we attached
+// to a modal screen's view (see attachModalZoomDismissRecognizerToScreen:), nil for
+// the stack's own recognizers.
+- (nullable RNSScreenView *)rnsModalZoomScreenForRecognizer:(UIGestureRecognizer *)gestureRecognizer
+{
+  if (![gestureRecognizer.view isKindOfClass:[RNSScreenView class]]) {
+    return nil;
+  }
+  RNSScreenView *screenView = (RNSScreenView *)gestureRecognizer.view;
+  if (screenView.stackAnimation != RNSScreenStackAnimationZoom || ![screenView isPresentedAsNativeModal]) {
+    return nil;
+  }
+  return screenView;
+}
+
+- (void)attachModalZoomDismissRecognizerToScreen:(RNSScreen *)screenController
+{
+  UIView *screenView = screenController.screenView;
+  for (UIGestureRecognizer *recognizer in screenView.gestureRecognizers) {
+    if ([recognizer isKindOfClass:[RNSPanGestureRecognizer class]]) {
+      return; // already attached (re-present of the same screen)
+    }
+  }
+  RNSPanGestureRecognizer *panRecognizer = [[RNSPanGestureRecognizer alloc] initWithTarget:self
+                                                                                    action:@selector(handleSwipe:)];
+  panRecognizer.delegate = self;
+  [screenView addGestureRecognizer:panRecognizer];
+}
+
 - (id<UIViewControllerInteractiveTransitioning>)interactionControllerForDismissal:
     (id<UIViewControllerAnimatedTransitioning>)animator
 {
+  // Gesture-driven modal zoom dismissal: hand the animator to the percent-driven
+  // controller (the stack-pop path does this in interactionControllerForAnimationController:).
+  if (_interactionController != nil && [animator isKindOfClass:[RNSScreenStackAnimator class]]) {
+    [_interactionController setAnimationController:(RNSScreenStackAnimator *)animator];
+  }
   return _interactionController;
 }
 
@@ -1364,6 +1465,14 @@ RNS_IGNORE_SUPER_CALL_END
 // Be careful when adding another type of gesture recognizer.
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldReceivePressOrTouchEvent:(NSObject *)event
 {
+  // Modal zoom dismiss recognizer: the checks below assume stack-owned screens
+  // (topScreen.isModal and viewControllers.count both reject a presented modal) —
+  // gate purely on the modal screen's own props instead.
+  RNSScreenView *modalZoomScreen = [self rnsModalZoomScreenForRecognizer:gestureRecognizer];
+  if (modalZoomScreen != nil) {
+    return modalZoomScreen.gestureEnabled && modalZoomScreen.fullScreenSwipeEnabled;
+  }
+
   if (@available(iOS 26, *)) {
     // in iOS 26, you can swipe to pop screen before the previous one finished transitioning;
     // this prevents from registering the second gesture
