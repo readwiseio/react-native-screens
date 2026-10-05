@@ -1250,7 +1250,15 @@ static void RNSZoomApplyCoverShadow(UIView *standIn, NSString *json)
     const CGRect canvas = CGRectMake(0, 0, alignmentRect.size.width, alignmentRect.size.height);
     UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithBounds:canvas format:format];
     const CGFloat coverScale = RNSZoomCoverScale(_animatedScreen.zoomCoverScale);
+    const CGFloat snapshotCornerRadius = self->_animatedScreen.zoomSourceCornerRadius;
     UIImage *cardImage = [renderer imageWithActions:^(UIGraphicsImageRendererContext *context) {
+      // renderInContext drops the cover's own corner clipping, so round the raster itself —
+      // the stand-in can't use masksToBounds without clipping its shadow away.
+      if (snapshotCornerRadius > 0) {
+        CGContextAddPath(
+            context.CGContext, [UIBezierPath bezierPathWithRoundedRect:canvas cornerRadius:snapshotCornerRadius].CGPath);
+        CGContextClip(context.CGContext);
+      }
       // The card zooms its own image inside a clipping box (a keyline hider); the
       // raster is flat, so the same zoom is re-applied here about the canvas centre.
       if (coverScale != 1) {
