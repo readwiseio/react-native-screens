@@ -258,6 +258,7 @@ export type NativeStackNavigationOptions = {
    * @platform ios
    */
   zoomCoverLighting?: ScreenProps['zoomCoverLighting'];
+  zoomCoverShadow?: ScreenProps['zoomCoverShadow'];
   /**
    * Readwise: paints the zoom debug borders for this screen's transitions at runtime.
    *

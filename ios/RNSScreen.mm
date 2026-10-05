@@ -1475,6 +1475,10 @@ RNS_IGNORE_SUPER_CALL_END
     [self setZoomCoverLighting:RCTNSStringFromStringNilIfEmpty(newScreenProps.zoomCoverLighting)];
   }
 
+  if (newScreenProps.zoomCoverShadow != oldScreenProps.zoomCoverShadow) {
+    [self setZoomCoverShadow:RCTNSStringFromStringNilIfEmpty(newScreenProps.zoomCoverShadow)];
+  }
+
   [self setPreventNativeDismiss:newScreenProps.preventNativeDismiss];
 
   [self setActivityStateOrNil:[NSNumber numberWithFloat:newScreenProps.activityState]];
@@ -2287,6 +2291,7 @@ RCT_EXPORT_VIEW_PROPERTY(zoomCloseOvershoot, CGFloat)
 RCT_EXPORT_VIEW_PROPERTY(zoomCoverScale, CGFloat)
 RCT_EXPORT_VIEW_PROPERTY(zoomShowDebugBorders, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(zoomCoverLighting, NSString)
+RCT_EXPORT_VIEW_PROPERTY(zoomCoverShadow, NSString)
 RCT_EXPORT_VIEW_PROPERTY(hideKeyboardOnSwipe, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(preventNativeDismiss, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(replaceAnimation, RNSScreenReplaceAnimation)

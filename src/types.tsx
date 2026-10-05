@@ -280,6 +280,15 @@ export interface ScreenProps extends ViewProps {
    */
   zoomCoverLighting?: string;
   /**
+   * Readwise: JSON drop-shadow spec for the flying cover, applied as a layer shadow on the
+   * stand-in: `{ color, offsetY, radius }`, where color is a processColor() int carrying the
+   * alpha. The raster cannot hold it — its canvas is cropped to the cover's own rect, and
+   * renderInContext skips layer shadows — so without this the card loses its shadow in flight.
+   *
+   * @platform ios
+   */
+  zoomCoverShadow?: string;
+  /**
    * Readwise: paints the zoom debug borders (red = flying stand-in, blue = real card)
    * for this screen's transitions — the runtime switch for the debug borders only;
    * the native RNSZoomDebugEnabled compile switch additionally gates logging and
