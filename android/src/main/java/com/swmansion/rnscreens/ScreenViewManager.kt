@@ -454,6 +454,11 @@ open class ScreenViewManager :
         value: String?,
     ) = Unit
 
+    override fun setZoomCoverShadow(
+        view: Screen?,
+        value: String?,
+    ) = Unit
+
     override fun setZoomShowDebugBorders(
         view: Screen?,
         value: Boolean,
