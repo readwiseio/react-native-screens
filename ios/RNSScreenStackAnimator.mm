@@ -1145,11 +1145,12 @@ static void RNSZoomApplyCoverShadow(UIView *standIn, NSString *json)
     return;
   }
   const uint32_t v = (uint32_t)[spec[@"color"] unsignedIntValue];
-  CGColorRef color = [UIColor colorWithRed:((v >> 16) & 0xFF) / 255.0
-                                     green:((v >> 8) & 0xFF) / 255.0
-                                      blue:(v & 0xFF) / 255.0
-                                     alpha:((v >> 24) & 0xFF) / 255.0]
-                         .CGColor;
+  // Hold the UIColor, not its CGColor: the CGColor is owned by the autoreleased UIColor
+  // and dangles if ARC releases it before the layers below are built.
+  UIColor *color = [UIColor colorWithRed:((v >> 16) & 0xFF) / 255.0
+                                   green:((v >> 8) & 0xFF) / 255.0
+                                    blue:(v & 0xFF) / 255.0
+                                   alpha:((v >> 24) & 0xFF) / 255.0];
   const CGFloat corner = [spec[@"cornerRadius"] doubleValue];
   const CGRect bounds = standIn.bounds;
   const CGFloat screenScale = UIScreen.mainScreen.scale;
@@ -1166,7 +1167,7 @@ static void RNSZoomApplyCoverShadow(UIView *standIn, NSString *json)
 
     CALayer *shadowLayer = [CALayer layer];
     shadowLayer.frame = bounds;
-    shadowLayer.shadowColor = color;
+    shadowLayer.shadowColor = color.CGColor;
     shadowLayer.shadowOffset = CGSizeZero;
     shadowLayer.shadowOpacity = 1;
     shadowLayer.shadowRadius = blur / 2;
