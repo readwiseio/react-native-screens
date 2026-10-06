@@ -1130,7 +1130,9 @@ static void RNSZoomApplyCoverLighting(UIView *standIn, NSString *json)
 // carries. The raster can't hold it: its canvas is cropped to the cover's own rect, and
 // renderInContext skips layer shadows. A layer shadow draws outside the bounds and follows
 // the flight transform, so the card keeps its shadow for the whole flight.
-static void RNSZoomApplyCoverShadow(UIView *standIn, NSString *json)
+// Closing lands at the shelf pose, where that same transform has shrunk the stack below what
+// the real cover draws; closeMultiplier takes it back. The open needs no correction.
+static void RNSZoomApplyCoverShadow(UIView *standIn, NSString *json, BOOL closing)
 {
   if (json.length == 0) {
     return;
@@ -1154,6 +1156,9 @@ static void RNSZoomApplyCoverShadow(UIView *standIn, NSString *json)
   const CGFloat corner = [spec[@"cornerRadius"] doubleValue];
   const CGRect bounds = standIn.bounds;
   const CGFloat screenScale = UIScreen.mainScreen.scale;
+  const CGFloat m = closing && spec[@"closeMultiplier"] != nil ? [spec[@"closeMultiplier"] doubleValue] : 1;
+  // The slot's own row clips the landed shadow; match it so the handoff doesn't jump.
+  const CGFloat clipBelow = closing && spec[@"closeClipBelow"] != nil ? [spec[@"closeClipBelow"] doubleValue] : -1;
 
   [CATransaction begin];
   [CATransaction setDisableActions:YES];
@@ -1162,8 +1167,8 @@ static void RNSZoomApplyCoverShadow(UIView *standIn, NSString *json)
   // One sublayer per CSS layer, built the way RCTBoxShadow builds them (alpha in the
   // colour, radius = blur / 2, spread and offset baked into the path).
   for (NSDictionary *layer in layers) {
-    const CGFloat blur = [layer[@"blur"] doubleValue];
-    const CGFloat spread = [layer[@"spread"] doubleValue];
+    const CGFloat blur = [layer[@"blur"] doubleValue] * m;
+    const CGFloat spread = [layer[@"spread"] doubleValue] * m;
 
     CALayer *shadowLayer = [CALayer layer];
     shadowLayer.frame = bounds;
@@ -1174,7 +1179,7 @@ static void RNSZoomApplyCoverShadow(UIView *standIn, NSString *json)
     shadowLayer.contentsScale = screenScale;
 
     const CGRect shadowRect =
-        CGRectOffset(CGRectInset(bounds, -spread, -spread), 0, [layer[@"y"] doubleValue]);
+        CGRectOffset(CGRectInset(bounds, -spread, -spread), 0, [layer[@"y"] doubleValue] * m);
     shadowLayer.shadowPath =
         [UIBezierPath bezierPathWithRoundedRect:shadowRect cornerRadius:MAX(corner + spread, 0)].CGPath;
 
@@ -1182,8 +1187,12 @@ static void RNSZoomApplyCoverShadow(UIView *standIn, NSString *json)
     CAShapeLayer *mask = [CAShapeLayer layer];
     mask.contentsScale = screenScale;
     mask.fillRule = kCAFillRuleEvenOdd;
-    UIBezierPath *maskPath =
-        [UIBezierPath bezierPathWithRect:CGRectInset(shadowRect, -2 * (blur + 1), -2 * (blur + 1))];
+    CGRect outerRect = CGRectInset(shadowRect, -2 * (blur + 1), -2 * (blur + 1));
+    const CGFloat clipMaxY = CGRectGetMaxY(bounds) + clipBelow;
+    if (clipBelow >= 0 && clipMaxY > CGRectGetMinY(outerRect)) {
+      outerRect.size.height = clipMaxY - CGRectGetMinY(outerRect);
+    }
+    UIBezierPath *maskPath = [UIBezierPath bezierPathWithRect:outerRect];
     [maskPath appendPath:[UIBezierPath bezierPathWithRoundedRect:bounds cornerRadius:corner]];
     mask.path = maskPath.CGPath;
     shadowLayer.mask = mask;
@@ -1202,6 +1211,7 @@ static void RNSZoomApplyCoverShadow(UIView *standIn, NSString *json)
 - (UIView *_Nullable)zoomMakeStandInFromCardView:(UIView *)cardView
                                       destCover:(UIView *_Nullable)destCover
                                     inContainer:(UIView *)container
+                                        closing:(BOOL)closing
 {
   const CGRect slotRect = _zoomCardGeometry.slotRect;
   const CGRect alignmentRect = _zoomCardGeometry.alignmentRect;
@@ -1293,7 +1303,7 @@ static void RNSZoomApplyCoverShadow(UIView *standIn, NSString *json)
 
     standIn = [[UIImageView alloc] initWithImage:cardImage];
     RNSZoomApplyCoverLighting(standIn, self->_animatedScreen.zoomCoverLighting);
-    RNSZoomApplyCoverShadow(standIn, self->_animatedScreen.zoomCoverShadow);
+    RNSZoomApplyCoverShadow(standIn, self->_animatedScreen.zoomCoverShadow, closing);
     if (!RNSZoomDebugEnabled && !self->_animatedScreen.zoomShowDebugBorders) {
       // Borders off: drop a card border a previous debug transition left behind
       // (it lives on the Fabric-owned card and would otherwise persist until remount).
@@ -1502,7 +1512,7 @@ static void RNSZoomCompleteTransition(
   UIView *standIn = nil;
   if (cardView != nil) {
     destCover = RNSZoomFindViewByNativeID(animatedView, RNSZoomDestCoverNativeID, 0);
-    standIn = [self zoomMakeStandInFromCardView:cardView destCover:destCover inContainer:container];
+    standIn = [self zoomMakeStandInFromCardView:cardView destCover:destCover inContainer:container closing:NO];
   }
 
   if (standIn != nil) {
@@ -1653,7 +1663,7 @@ static void RNSZoomCompleteTransition(
   UIView *standIn = nil;
   if (cardView != nil) {
     UIView *destCover = RNSZoomFindViewByNativeID(animatedView, RNSZoomDestCoverNativeID, 0);
-    standIn = [self zoomMakeStandInFromCardView:cardView destCover:destCover inContainer:container];
+    standIn = [self zoomMakeStandInFromCardView:cardView destCover:destCover inContainer:container closing:YES];
   }
 
   if (standIn != nil) {
@@ -1870,7 +1880,7 @@ static void RNSZoomRestartLayerClock(CALayer *_Nullable layer)
   if (cardView != nil && animatedView.window != nil) {
     UIView *container = animatedView.superview;
     UIView *destCover = RNSZoomFindViewByNativeID(animatedView, RNSZoomDestCoverNativeID, 0);
-    standIn = [self zoomMakeStandInFromCardView:cardView destCover:destCover inContainer:container];
+    standIn = [self zoomMakeStandInFromCardView:cardView destCover:destCover inContainer:container closing:YES];
   }
   if (RNSZoomDebugEnabled && standIn == nil) {
     NSLog(
