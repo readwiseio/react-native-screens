@@ -1188,9 +1188,9 @@ static void RNSZoomApplyCoverShadow(UIView *standIn, NSString *json, BOOL closin
     mask.contentsScale = screenScale;
     mask.fillRule = kCAFillRuleEvenOdd;
     CGRect outerRect = CGRectInset(shadowRect, -2 * (blur + 1), -2 * (blur + 1));
-    if (clipBelow >= 0) {
-      const CGFloat maxY = CGRectGetMaxY(bounds) + clipBelow;
-      outerRect.size.height = MAX(maxY - CGRectGetMinY(outerRect), 0);
+    const CGFloat clipMaxY = CGRectGetMaxY(bounds) + clipBelow;
+    if (clipBelow >= 0 && clipMaxY > CGRectGetMinY(outerRect)) {
+      outerRect.size.height = clipMaxY - CGRectGetMinY(outerRect);
     }
     UIBezierPath *maskPath = [UIBezierPath bezierPathWithRect:outerRect];
     [maskPath appendPath:[UIBezierPath bezierPathWithRoundedRect:bounds cornerRadius:corner]];
