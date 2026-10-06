@@ -1126,6 +1126,73 @@ static void RNSZoomApplyCoverLighting(UIView *standIn, NSString *json)
   [CATransaction commit];
 }
 
+// Re-applies the cover's drop shadow to the flying stand-in, from the JSON spec the screen
+// carries. The raster can't hold it: its canvas is cropped to the cover's own rect, and
+// renderInContext skips layer shadows. A layer shadow draws outside the bounds and follows
+// the flight transform, so the card keeps its shadow for the whole flight.
+static void RNSZoomApplyCoverShadow(UIView *standIn, NSString *json)
+{
+  if (json.length == 0) {
+    return;
+  }
+  NSData *data = [json dataUsingEncoding:NSUTF8StringEncoding];
+  NSDictionary *spec = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+  if (![spec isKindOfClass:[NSDictionary class]]) {
+    return;
+  }
+  NSArray *layers = spec[@"layers"];
+  if (![layers isKindOfClass:[NSArray class]]) {
+    return;
+  }
+  const uint32_t v = (uint32_t)[spec[@"color"] unsignedIntValue];
+  // Hold the UIColor, not its CGColor: the CGColor is owned by the autoreleased UIColor
+  // and dangles if ARC releases it before the layers below are built.
+  UIColor *color = [UIColor colorWithRed:((v >> 16) & 0xFF) / 255.0
+                                   green:((v >> 8) & 0xFF) / 255.0
+                                    blue:(v & 0xFF) / 255.0
+                                   alpha:((v >> 24) & 0xFF) / 255.0];
+  const CGFloat corner = [spec[@"cornerRadius"] doubleValue];
+  const CGRect bounds = standIn.bounds;
+  const CGFloat screenScale = UIScreen.mainScreen.scale;
+
+  [CATransaction begin];
+  [CATransaction setDisableActions:YES];
+  standIn.clipsToBounds = NO;
+  standIn.layer.masksToBounds = NO;
+  // One sublayer per CSS layer, built the way RCTBoxShadow builds them (alpha in the
+  // colour, radius = blur / 2, spread and offset baked into the path).
+  for (NSDictionary *layer in layers) {
+    const CGFloat blur = [layer[@"blur"] doubleValue];
+    const CGFloat spread = [layer[@"spread"] doubleValue];
+
+    CALayer *shadowLayer = [CALayer layer];
+    shadowLayer.frame = bounds;
+    shadowLayer.shadowColor = color.CGColor;
+    shadowLayer.shadowOffset = CGSizeZero;
+    shadowLayer.shadowOpacity = 1;
+    shadowLayer.shadowRadius = blur / 2;
+    shadowLayer.contentsScale = screenScale;
+
+    const CGRect shadowRect =
+        CGRectOffset(CGRectInset(bounds, -spread, -spread), 0, [layer[@"y"] doubleValue]);
+    shadowLayer.shadowPath =
+        [UIBezierPath bezierPathWithRoundedRect:shadowRect cornerRadius:MAX(corner + spread, 0)].CGPath;
+
+    // Even-odd cutout of the card's own rect, so the stack never darkens the cover itself.
+    CAShapeLayer *mask = [CAShapeLayer layer];
+    mask.contentsScale = screenScale;
+    mask.fillRule = kCAFillRuleEvenOdd;
+    UIBezierPath *maskPath =
+        [UIBezierPath bezierPathWithRect:CGRectInset(shadowRect, -2 * (blur + 1), -2 * (blur + 1))];
+    [maskPath appendPath:[UIBezierPath bezierPathWithRoundedRect:bounds cornerRadius:corner]];
+    mask.path = maskPath.CGPath;
+    shadowLayer.mask = mask;
+
+    [standIn.layer addSublayer:shadowLayer];
+  }
+  [CATransaction commit];
+}
+
 // Builds the flying stand-in for the cover. Its natural frame is the ALIGNMENT rect
 // (the reader pose), composited at full resolution: the card render (badges hidden,
 // mapped so its cover rect fills the canvas) as a fallback base, and the reader's own
@@ -1184,7 +1251,15 @@ static void RNSZoomApplyCoverLighting(UIView *standIn, NSString *json)
     const CGRect canvas = CGRectMake(0, 0, alignmentRect.size.width, alignmentRect.size.height);
     UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithBounds:canvas format:format];
     const CGFloat coverScale = RNSZoomCoverScale(_animatedScreen.zoomCoverScale);
+    const CGFloat snapshotCornerRadius = self->_animatedScreen.zoomSourceCornerRadius;
     UIImage *cardImage = [renderer imageWithActions:^(UIGraphicsImageRendererContext *context) {
+      // renderInContext drops the cover's own corner clipping, so round the raster itself —
+      // the stand-in can't use masksToBounds without clipping its shadow away.
+      if (snapshotCornerRadius > 0) {
+        CGContextAddPath(
+            context.CGContext, [UIBezierPath bezierPathWithRoundedRect:canvas cornerRadius:snapshotCornerRadius].CGPath);
+        CGContextClip(context.CGContext);
+      }
       // The card zooms its own image inside a clipping box (a keyline hider); the
       // raster is flat, so the same zoom is re-applied here about the canvas centre.
       if (coverScale != 1) {
@@ -1218,6 +1293,7 @@ static void RNSZoomApplyCoverLighting(UIView *standIn, NSString *json)
 
     standIn = [[UIImageView alloc] initWithImage:cardImage];
     RNSZoomApplyCoverLighting(standIn, self->_animatedScreen.zoomCoverLighting);
+    RNSZoomApplyCoverShadow(standIn, self->_animatedScreen.zoomCoverShadow);
     if (!RNSZoomDebugEnabled && !self->_animatedScreen.zoomShowDebugBorders) {
       // Borders off: drop a card border a previous debug transition left behind
       // (it lives on the Fabric-owned card and would otherwise persist until remount).

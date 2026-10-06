@@ -120,6 +120,11 @@ namespace react = facebook::react;
 // JSON cover-lighting spec (spine + edge gradients, corner radius) drawn as
 // CAGradientLayers on the flying stand-in; nil/empty means no native lighting.
 @property (nonatomic, copy, nullable) NSString *zoomCoverLighting;
+// JSON cover-shadow spec — `{ color, cornerRadius, layers: [{ y, blur, spread }] }` — rebuilt
+// as one shadow sublayer per entry on the flying stand-in; nil/empty means no shadow. The
+// snapshot canvas is cropped to the cover, and renderInContext skips layer shadows, so it
+// cannot come from the raster.
+@property (nonatomic, copy, nullable) NSString *zoomCoverShadow;
 @property (nonatomic) int activityState;
 @property (nonatomic, nullable) NSString *screenId;
 @property (weak, nonatomic) UIView<RNSScreenContainerDelegate> *reactSuperview;
