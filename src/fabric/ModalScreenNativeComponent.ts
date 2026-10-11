@@ -120,6 +120,8 @@ export interface NativeProps extends ViewProps {
   zoomClosePageFadeMs?: WithDefault<Float, 0.0>;
   zoomCommitRevealMs?: WithDefault<Float, 0.0>;
   zoomCancelSpringMs?: WithDefault<Float, 0.0>;
+  zoomClosePageGoneAt?: WithDefault<Float, 0.0>;
+  zoomCloseRevealAt?: WithDefault<Float, 0.0>;
   zoomCloseOvershoot?: WithDefault<Float, 0.0>;
   zoomCoverScale?: WithDefault<Float, 0.0>;
   zoomCoverLighting?: string;

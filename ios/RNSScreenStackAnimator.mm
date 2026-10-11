@@ -163,6 +163,18 @@ static constexpr NSTimeInterval RNSZoomCloseRevealDuration = 0.2; // CLOSE_REVEA
 static constexpr NSTimeInterval RNSZoomCloseFlightDelay = 0.175; // CLOSE_FLIGHT_DELAY_MS
 static constexpr NSTimeInterval RNSZoomClosePageFadeDuration = 0.3; // COVER_ZOOM_CLOSE_FADE_MS
 static constexpr NSTimeInterval RNSZoomCommitRevealDuration = 0.15; // cover materialise on drag commit
+// Progress-capped ramp: 0 until `at` reaches `cap` (zoomClosePageGoneAt / zoomCloseRevealAt,
+// fractions of the way home); a non-positive cap means no cap.
+static inline CGFloat RNSZoomProgressRamp(CGFloat at, CGFloat cap)
+{
+  return cap > 0 ? RNSZoomClamp01(at / cap) : 0;
+}
+
+// Close reveal: the time-based ramp or the flight-progress ramp, whichever is further.
+static inline CGFloat RNSZoomCloseRevealAlpha(CGFloat t, CGFloat revealFraction, CGFloat at, CGFloat revealAt)
+{
+  return MAX(RNSZoomClamp01(t / MAX(revealFraction, 0.001)), RNSZoomProgressRamp(at, revealAt));
+}
 
 // Per-screen timing override: the prop carries milliseconds; non-positive keeps the default.
 static inline NSTimeInterval RNSZoomDuration(CGFloat overrideMs, NSTimeInterval fallback)
@@ -302,14 +314,48 @@ static void RNSZoomCollectViewsByNativeID(UIView *root, NSString *nativeID, int 
 }
 
 // ===== RNSZOOM DEBUG SWITCH (set NO / 1.0 before shipping) =====
-// Borders: red = flying stand-in, blue = real shelf card; the reader loading cover's
-// green border lives in JS (bookwise ReaderZoomLoadingCover, COVER_ZOOM_DEBUG —
-// feature branch artemlitch/native-book-zoom).
-// The borders (only) are also available at runtime via the screen's
-// zoomShowDebugBorders prop — no rebuild needed; this compile switch additionally
-// gates the entry NSLogs and the slow-motion container speed below.
+// Paint: red = flying stand-in, magenta/orange/cyan = its shadow layers, green = the
+// reader page during a close, yellow = the backdrop dim, blue = real shelf card; the
+// reader loading cover's green border lives in JS (bookwise ReaderZoomLoadingCover,
+// COVER_ZOOM_DEBUG).
+// The paint (only) is also available at runtime via the screen's zoomShowDebugBorders
+// prop — no rebuild needed; this compile switch additionally gates the entry NSLogs and
+// the slow-motion container speed below.
 static const BOOL RNSZoomDebugEnabled = NO;
 static const NSInteger RNSZoomDebugCardBorderTag = 987654;
+static const NSInteger RNSZoomDebugPagePaintTag = 987655;
+
+static UIView *RNSZoomDebugPaint(UIView *host, UIColor *color)
+{
+  UIView *paint = [[UIView alloc] initWithFrame:host.bounds];
+  paint.backgroundColor = [color colorWithAlphaComponent:0.35];
+  paint.layer.borderColor = color.CGColor;
+  paint.layer.borderWidth = 6;
+  paint.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+  paint.userInteractionEnabled = NO;
+  [host addSubview:paint];
+  return paint;
+}
+
+// Green over the reader page for a close: it fades with the page's own opacity ramp.
+static void RNSZoomDebugPaintPage(UIView *page)
+{
+  if ([page viewWithTag:RNSZoomDebugPagePaintTag] == nil) {
+    RNSZoomDebugPaint(page, UIColor.greenColor).tag = RNSZoomDebugPagePaintTag;
+  }
+}
+
+static UIColor *RNSZoomDebugShadowColor(NSUInteger layerIndex)
+{
+  switch (layerIndex) {
+    case 0:
+      return [UIColor.magentaColor colorWithAlphaComponent:0.85];
+    case 1:
+      return [UIColor.orangeColor colorWithAlphaComponent:0.85];
+    default:
+      return [UIColor.cyanColor colorWithAlphaComponent:0.85];
+  }
+}
 // 1.0 = real speed; 0.1 = 10x slow motion. NOTE: slow motion distorts the property
 // animator's first frames (pacing rebases) — trust it for element attribution only,
 // never for timing.
@@ -385,13 +431,21 @@ static void RNSZoomRemoveOpacityRamp(UIView *_Nullable view)
 }
 
 // Presentation-side page fade shared by the close flights: the page fades out over
-// `fadeDuration` (COVER_ZOOM_CLOSE_FADE_MS by default) within `duration`, and Fabric
-// commits mid-close can't restore it (see RNSZoomAddOpacityRamp).
-static void RNSZoomAddPageFadeRamp(UIView *view, NSTimeInterval duration, NSTimeInterval fadeDuration)
+// `fadeDuration` (COVER_ZOOM_CLOSE_FADE_MS by default) within `duration`, and is gone by
+// `pageGoneAt` of the card's way home. Fabric commits mid-close can't restore it (see
+// RNSZoomAddOpacityRamp).
+static void RNSZoomAddPageFadeRamp(
+    UIView *view,
+    NSTimeInterval duration,
+    NSTimeInterval fadeDuration,
+    CGFloat pageGoneAt,
+    CGFloat (^atForT)(CGFloat t))
 {
   const CGFloat pageFadeFraction = MIN(fadeDuration / MAX(duration, 0.01), 1.0);
   RNSZoomAddOpacityRamp(view, duration, ^CGFloat(CGFloat t) {
-    return MAX(1.0 - t / pageFadeFraction, 0.0);
+    const CGFloat byTime = MAX(1.0 - t / pageFadeFraction, 0.0);
+    const CGFloat byFlight = 1.0 - RNSZoomProgressRamp(atForT(t), pageGoneAt);
+    return MIN(byTime, byFlight);
   });
 }
 
@@ -1211,7 +1265,8 @@ static void RNSZoomAddCoverShadowKeyframes(
 // The stack is built for the pose the flight starts from; zoomAnimateCoverShadow… then
 // re-shapes it along the flight when the spec carries the width rule. Older specs only
 // carry closeMultiplier, which takes the shelf-pose stack back to what the card draws.
-static RNSZoomCoverShadowState *_Nullable RNSZoomApplyCoverShadow(UIView *standIn, NSString *json, BOOL closing)
+static RNSZoomCoverShadowState *_Nullable
+RNSZoomApplyCoverShadow(UIView *standIn, NSString *json, BOOL closing, BOOL debugPaint)
 {
   if (json.length == 0) {
     return nil;
@@ -1255,7 +1310,7 @@ static RNSZoomCoverShadowState *_Nullable RNSZoomApplyCoverShadow(UIView *standI
   for (NSDictionary *layer in layers) {
     CALayer *shadowLayer = [CALayer layer];
     shadowLayer.frame = bounds;
-    shadowLayer.shadowColor = color.CGColor;
+    shadowLayer.shadowColor = debugPaint ? RNSZoomDebugShadowColor(shadowLayers.count).CGColor : color.CGColor;
     shadowLayer.shadowOffset = CGSizeZero;
     shadowLayer.shadowOpacity = 1;
     shadowLayer.shadowRadius = [layer[@"blur"] doubleValue] * m / 2;
@@ -1268,7 +1323,8 @@ static RNSZoomCoverShadowState *_Nullable RNSZoomApplyCoverShadow(UIView *standI
     mask.path = RNSZoomCoverShadowMaskPath(bounds, corner, layer, m, closing ? clipBelow : -1).CGPath;
     shadowLayer.mask = mask;
 
-    [standIn.layer addSublayer:shadowLayer];
+    // Same z-order as RCTViewComponentView: the first CSS layer ends up on top.
+    [standIn.layer insertSublayer:shadowLayer atIndex:0];
     [shadowLayers addObject:shadowLayer];
   }
   [CATransaction commit];
@@ -1377,31 +1433,23 @@ static RNSZoomCoverShadowState *_Nullable RNSZoomApplyCoverShadow(UIView *standI
 
     standIn = [[UIImageView alloc] initWithImage:cardImage];
     RNSZoomApplyCoverLighting(standIn, self->_animatedScreen.zoomCoverLighting);
-    self->_zoomCoverShadow = RNSZoomApplyCoverShadow(standIn, self->_animatedScreen.zoomCoverShadow, closing);
-    if (!RNSZoomDebugEnabled && !self->_animatedScreen.zoomShowDebugBorders) {
+    const BOOL debugPaint = RNSZoomDebugEnabled || self->_animatedScreen.zoomShowDebugBorders;
+    self->_zoomCoverShadow =
+        RNSZoomApplyCoverShadow(standIn, self->_animatedScreen.zoomCoverShadow, closing, debugPaint);
+    if (!debugPaint) {
       // Borders off: drop a card border a previous debug transition left behind
       // (it lives on the Fabric-owned card and would otherwise persist until remount).
       // Only runs when a stand-in is built; if every later transition takes the
       // masked/fade path the border rides until remount — accepted for a debug tool.
       [[cardView viewWithTag:RNSZoomDebugCardBorderTag] removeFromSuperview];
     } else {
-      UIView *debugFlyingPaint = [[UIView alloc] initWithFrame:standIn.bounds];
-      debugFlyingPaint.layer.borderColor = UIColor.redColor.CGColor;
-      debugFlyingPaint.layer.borderWidth = 6;
-      debugFlyingPaint.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-      debugFlyingPaint.userInteractionEnabled = NO;
-      [standIn addSubview:debugFlyingPaint];
+      RNSZoomDebugPaint(standIn, UIColor.redColor);
       if ([cardView viewWithTag:RNSZoomDebugCardBorderTag] == nil) {
-        UIView *debugCardPaint = [[UIView alloc] initWithFrame:cardView.bounds];
+        UIView *debugCardPaint = RNSZoomDebugPaint(cardView, UIColor.blueColor);
         debugCardPaint.tag = RNSZoomDebugCardBorderTag;
-        // Tagged as a badge so snapshot renders exclude the border itself — it would
+        // Tagged as a badge so snapshot renders exclude the paint itself — it would
         // otherwise be baked into every subsequent stand-in.
         debugCardPaint.accessibilityIdentifier = RNSZoomCoverBadgeNativeID;
-        debugCardPaint.layer.borderColor = UIColor.blueColor.CGColor;
-        debugCardPaint.layer.borderWidth = 6;
-        debugCardPaint.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        debugCardPaint.userInteractionEnabled = NO;
-        [cardView addSubview:debugCardPaint];
       }
     }
     standIn.frame = alignmentRect;
@@ -1635,7 +1683,7 @@ static void RNSZoomCompleteTransition(
 {
   UIView *container = transitionContext.containerView;
   UIView *dimmingView = [[UIView alloc] initWithFrame:container.bounds];
-  dimmingView.backgroundColor = [UIColor blackColor];
+  dimmingView.backgroundColor = _animatedScreen.zoomShowDebugBorders ? [UIColor yellowColor] : [UIColor blackColor];
   dimmingView.alpha = 0.0;
   // Tracked so animationEnded:'s backstop can remove it on an abnormal teardown.
   _zoomDimmingView = dimmingView;
@@ -1725,7 +1773,7 @@ static void RNSZoomCompleteTransition(
 {
   UIView *container = transitionContext.containerView;
   UIView *dimmingView = [[UIView alloc] initWithFrame:container.bounds];
-  dimmingView.backgroundColor = [UIColor blackColor];
+  dimmingView.backgroundColor = _animatedScreen.zoomShowDebugBorders ? [UIColor yellowColor] : [UIColor blackColor];
   // Tracked so animationEnded:'s backstop can remove it on an abnormal teardown.
   _zoomDimmingView = dimmingView;
 
@@ -1825,24 +1873,33 @@ static void RNSZoomCompleteTransition(
     [UIView performWithoutAnimation:^{
       standIn.transform = [self zoomCardTransformForAt:0];
       standIn.alpha = 0.0;
+      if (RNSZoomDebugEnabled || screenForTiming.zoomShowDebugBorders) {
+        RNSZoomDebugPaintPage(animatedView);
+      }
     }];
 
     const CGFloat revealFraction =
         MIN(RNSZoomDuration(screenForTiming.zoomCloseRevealMs, RNSZoomCloseRevealDuration) / totalDuration, 1.0);
+    const CGFloat overshoot = RNSZoomOvershoot(screenForTiming.zoomCloseOvershoot);
+    CGFloat (^atForT)(CGFloat) = ^CGFloat(CGFloat t) {
+      return RNSZoomDelayedCloseEasing(t, delayFraction, overshoot);
+    };
     RNSZoomAddPageFadeRamp(
-        animatedView, totalDuration, RNSZoomDuration(screenForTiming.zoomClosePageFadeMs, RNSZoomClosePageFadeDuration));
+        animatedView,
+        totalDuration,
+        RNSZoomDuration(screenForTiming.zoomClosePageFadeMs, RNSZoomClosePageFadeDuration),
+        screenForTiming.zoomClosePageGoneAt,
+        atForT);
     _zoomRampedView = animatedView;
 
     UIViewPropertyAnimator *animator = [[UIViewPropertyAnimator alloc] initWithDuration:totalDuration
                                                                                   curve:UIViewAnimationCurveLinear
                                                                              animations:nil];
-    const CGFloat overshoot = RNSZoomOvershoot(screenForTiming.zoomCloseOvershoot);
-    CGFloat (^atForT)(CGFloat) = ^CGFloat(CGFloat t) {
-      return RNSZoomDelayedCloseEasing(t, delayFraction, overshoot);
-    };
+    const CGFloat revealAt = screenForTiming.zoomCloseRevealAt;
     [animator addAnimations:^{
-      RNSZoomAddFlightKeyframes(standIn, revealFraction, ^(CGFloat t) {
+      RNSZoomAddFlightKeyframes(nil, 0, ^(CGFloat t) {
         const CGFloat at = atForT(t);
+        standIn.alpha = RNSZoomCloseRevealAlpha(t, revealFraction, at, revealAt);
         standIn.transform = [weakSelf zoomCardTransformForAt:at];
         dimmingView.alpha = RNSZoomDimAlphaAt(at);
       });
@@ -2066,24 +2123,33 @@ static void RNSZoomRestartLayerClock(CALayer *_Nullable layer)
     [UIView performWithoutAnimation:^{
       standIn.alpha = 0.0;
       standIn.transform = RNSZoomArcLerpTransform(releasePose, slot, 0);
+      if (RNSZoomDebugEnabled || screen.zoomShowDebugBorders) {
+        RNSZoomDebugPaintPage(animatedView);
+      }
     }];
 
     const CGFloat revealFraction = MIN(
         RNSZoomDuration(screen.zoomCommitRevealMs, RNSZoomCommitRevealDuration) / MAX(_transitionDuration, 0.01), 1.0);
+    const CGFloat overshoot = RNSZoomOvershoot(screen.zoomCloseOvershoot);
+    CGFloat (^atForT)(CGFloat) = ^CGFloat(CGFloat t) {
+      return RNSZoomCloseEasing(t, overshoot);
+    };
     RNSZoomAddPageFadeRamp(
-        animatedView, _transitionDuration, RNSZoomDuration(screen.zoomClosePageFadeMs, RNSZoomClosePageFadeDuration));
+        animatedView,
+        _transitionDuration,
+        RNSZoomDuration(screen.zoomClosePageFadeMs, RNSZoomClosePageFadeDuration),
+        screen.zoomClosePageGoneAt,
+        atForT);
     _zoomRampedView = animatedView;
 
     UIViewPropertyAnimator *flight = [[UIViewPropertyAnimator alloc] initWithDuration:_transitionDuration
                                                                                 curve:UIViewAnimationCurveLinear
                                                                            animations:nil];
-    const CGFloat overshoot = RNSZoomOvershoot(screen.zoomCloseOvershoot);
-    CGFloat (^atForT)(CGFloat) = ^CGFloat(CGFloat t) {
-      return RNSZoomCloseEasing(t, overshoot);
-    };
+    const CGFloat revealAt = screen.zoomCloseRevealAt;
     [flight addAnimations:^{
-      RNSZoomAddFlightKeyframes(standIn, revealFraction, ^(CGFloat t) {
+      RNSZoomAddFlightKeyframes(nil, 0, ^(CGFloat t) {
         const CGFloat cp = atForT(t);
+        standIn.alpha = RNSZoomCloseRevealAlpha(t, revealFraction, cp, revealAt);
         standIn.transform = RNSZoomArcLerpTransform(releasePose, slot, cp);
         dimmingView.alpha = RNSZoomDimAlphaAt(cp);
       });

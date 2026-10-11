@@ -108,6 +108,11 @@ namespace react = facebook::react;
 @property (nonatomic) CGFloat zoomClosePageFadeMs;
 @property (nonatomic) CGFloat zoomCommitRevealMs;
 @property (nonatomic) CGFloat zoomCancelSpringMs;
+// Close-flight caps as a fraction of the cover's way home (0 = reader, 1 = slot): the page
+// is fully faded by zoomClosePageGoneAt and the stand-in fully opaque by zoomCloseRevealAt,
+// whatever the ms knobs above say. Non-positive leaves the ms knob uncapped.
+@property (nonatomic) CGFloat zoomClosePageGoneAt;
+@property (nonatomic) CGFloat zoomCloseRevealAt;
 // Back-easing coefficient for the close landing's squash-and-recover bounce
 // (unitless, not ms); non-positive keeps the built-in default (1.1).
 @property (nonatomic) CGFloat zoomCloseOvershoot;
