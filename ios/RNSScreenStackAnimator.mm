@@ -1323,7 +1323,8 @@ RNSZoomApplyCoverShadow(UIView *standIn, NSString *json, BOOL closing, BOOL debu
     mask.path = RNSZoomCoverShadowMaskPath(bounds, corner, layer, m, closing ? clipBelow : -1).CGPath;
     shadowLayer.mask = mask;
 
-    [standIn.layer addSublayer:shadowLayer];
+    // Same z-order as RCTViewComponentView: the first CSS layer ends up on top.
+    [standIn.layer insertSublayer:shadowLayer atIndex:0];
     [shadowLayers addObject:shadowLayer];
   }
   [CATransaction commit];
