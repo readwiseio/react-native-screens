@@ -238,6 +238,10 @@ export type NativeStackNavigationOptions = {
   zoomCommitRevealMs?: ScreenProps['zoomCommitRevealMs'];
   /** Readwise: see `zoomCloseFlightDelayMs`. @platform ios */
   zoomCancelSpringMs?: ScreenProps['zoomCancelSpringMs'];
+  /** Readwise: see `ScreenProps['zoomClosePageGoneAt']`. @platform ios */
+  zoomClosePageGoneAt?: ScreenProps['zoomClosePageGoneAt'];
+  /** Readwise: see `ScreenProps['zoomCloseRevealAt']`. @platform ios */
+  zoomCloseRevealAt?: ScreenProps['zoomCloseRevealAt'];
   /**
    * Readwise: back-easing coefficient for the close landing's squash-and-recover
    * bounce (unitless). Non-positive keeps the default (1.1).

@@ -179,6 +179,22 @@ export interface ScreenProps extends ViewProps {
      */
     zoomCancelSpringMs?: number;
     /**
+     * Readwise: fraction of the cover's way home (0 = reader, 1 = slot) by which the
+     * page is fully faded on the close flights, whatever `zoomClosePageFadeMs` says.
+     * Non-positive leaves the fade time-based only.
+     *
+     * @platform ios
+     */
+    zoomClosePageGoneAt?: number;
+    /**
+     * Readwise: fraction of the cover's way home by which the flying stand-in is fully
+     * opaque on the close flights, whatever the reveal ms knobs say. Non-positive leaves
+     * the reveal time-based only.
+     *
+     * @platform ios
+     */
+    zoomCloseRevealAt?: number;
+    /**
      * Readwise: back-easing coefficient for the close landing's squash-and-recover
      * bounce (unitless — larger = deeper squash). Non-positive keeps the default (1.1).
      *

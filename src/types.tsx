@@ -242,6 +242,22 @@ export interface ScreenProps extends ViewProps {
    */
   zoomClosePageFadeMs?: number;
   /**
+   * Readwise: fraction of the cover's way home (0 = reader, 1 = slot) by which the
+   * page is fully faded on the close flights, whatever `zoomClosePageFadeMs` says.
+   * Non-positive leaves the fade time-based only.
+   *
+   * @platform ios
+   */
+  zoomClosePageGoneAt?: number;
+  /**
+   * Readwise: fraction of the cover's way home by which the flying stand-in is fully
+   * opaque on the close flights, whatever the reveal ms knobs say. Non-positive leaves
+   * the reveal time-based only.
+   *
+   * @platform ios
+   */
+  zoomCloseRevealAt?: number;
+  /**
    * Readwise: duration (ms) of the stand-in's fade-in when a dismiss drag commits.
    * Non-positive keeps the default (150ms).
    *

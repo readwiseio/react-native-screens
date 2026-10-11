@@ -113,6 +113,8 @@ export const InnerScreen = React.forwardRef<View, ScreenProps>(
       zoomClosePageFadeMs = 0,
       zoomCommitRevealMs = 0,
       zoomCancelSpringMs = 0,
+      zoomClosePageGoneAt = 0,
+      zoomCloseRevealAt = 0,
       zoomCloseOvershoot = 0,
       zoomCoverScale = 0,
       zoomCoverLighting,
@@ -265,6 +267,8 @@ export const InnerScreen = React.forwardRef<View, ScreenProps>(
             zoomClosePageFadeMs={zoomClosePageFadeMs}
             zoomCommitRevealMs={zoomCommitRevealMs}
             zoomCancelSpringMs={zoomCancelSpringMs}
+            zoomClosePageGoneAt={zoomClosePageGoneAt}
+            zoomCloseRevealAt={zoomCloseRevealAt}
             zoomCloseOvershoot={zoomCloseOvershoot}
             zoomCoverScale={zoomCoverScale}
             zoomCoverLighting={zoomCoverLighting}

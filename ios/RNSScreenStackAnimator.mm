@@ -163,9 +163,18 @@ static constexpr NSTimeInterval RNSZoomCloseRevealDuration = 0.2; // CLOSE_REVEA
 static constexpr NSTimeInterval RNSZoomCloseFlightDelay = 0.175; // CLOSE_FLIGHT_DELAY_MS
 static constexpr NSTimeInterval RNSZoomClosePageFadeDuration = 0.3; // COVER_ZOOM_CLOSE_FADE_MS
 static constexpr NSTimeInterval RNSZoomCommitRevealDuration = 0.15; // cover materialise on drag commit
-// The page is fully gone by this point of the card's travel home (0 = reader, 1 = slot),
-// whatever the fade duration, so a dark page never lingers around the landed card.
-static constexpr CGFloat RNSZoomClosePageGoneAt = 0.6;
+// Progress-capped ramp: 0 until `at` reaches `cap` (zoomClosePageGoneAt / zoomCloseRevealAt,
+// fractions of the way home); a non-positive cap means no cap.
+static inline CGFloat RNSZoomProgressRamp(CGFloat at, CGFloat cap)
+{
+  return cap > 0 ? RNSZoomClamp01(at / cap) : 0;
+}
+
+// Close reveal: the time-based ramp or the flight-progress ramp, whichever is further.
+static inline CGFloat RNSZoomCloseRevealAlpha(CGFloat t, CGFloat revealFraction, CGFloat at, CGFloat revealAt)
+{
+  return MAX(RNSZoomClamp01(t / MAX(revealFraction, 0.001)), RNSZoomProgressRamp(at, revealAt));
+}
 
 // Per-screen timing override: the prop carries milliseconds; non-positive keeps the default.
 static inline NSTimeInterval RNSZoomDuration(CGFloat overrideMs, NSTimeInterval fallback)
@@ -388,19 +397,20 @@ static void RNSZoomRemoveOpacityRamp(UIView *_Nullable view)
 }
 
 // Presentation-side page fade shared by the close flights: the page fades out over
-// `fadeDuration` (COVER_ZOOM_CLOSE_FADE_MS by default) within `duration`, capped by the
-// card's progress so it is gone by RNSZoomClosePageGoneAt. Fabric commits mid-close
-// can't restore it (see RNSZoomAddOpacityRamp).
+// `fadeDuration` (COVER_ZOOM_CLOSE_FADE_MS by default) within `duration`, and is gone by
+// `pageGoneAt` of the card's way home. Fabric commits mid-close can't restore it (see
+// RNSZoomAddOpacityRamp).
 static void RNSZoomAddPageFadeRamp(
     UIView *view,
     NSTimeInterval duration,
     NSTimeInterval fadeDuration,
+    CGFloat pageGoneAt,
     CGFloat (^atForT)(CGFloat t))
 {
   const CGFloat pageFadeFraction = MIN(fadeDuration / MAX(duration, 0.01), 1.0);
   RNSZoomAddOpacityRamp(view, duration, ^CGFloat(CGFloat t) {
     const CGFloat byTime = MAX(1.0 - t / pageFadeFraction, 0.0);
-    const CGFloat byFlight = 1.0 - RNSZoomClamp01(atForT(t) / RNSZoomClosePageGoneAt);
+    const CGFloat byFlight = 1.0 - RNSZoomProgressRamp(atForT(t), pageGoneAt);
     return MIN(byTime, byFlight);
   });
 }
@@ -1847,15 +1857,18 @@ static void RNSZoomCompleteTransition(
         animatedView,
         totalDuration,
         RNSZoomDuration(screenForTiming.zoomClosePageFadeMs, RNSZoomClosePageFadeDuration),
+        screenForTiming.zoomClosePageGoneAt,
         atForT);
     _zoomRampedView = animatedView;
 
     UIViewPropertyAnimator *animator = [[UIViewPropertyAnimator alloc] initWithDuration:totalDuration
                                                                                   curve:UIViewAnimationCurveLinear
                                                                              animations:nil];
+    const CGFloat revealAt = screenForTiming.zoomCloseRevealAt;
     [animator addAnimations:^{
-      RNSZoomAddFlightKeyframes(standIn, revealFraction, ^(CGFloat t) {
+      RNSZoomAddFlightKeyframes(nil, 0, ^(CGFloat t) {
         const CGFloat at = atForT(t);
+        standIn.alpha = RNSZoomCloseRevealAlpha(t, revealFraction, at, revealAt);
         standIn.transform = [weakSelf zoomCardTransformForAt:at];
         dimmingView.alpha = RNSZoomDimAlphaAt(at);
       });
@@ -2091,15 +2104,18 @@ static void RNSZoomRestartLayerClock(CALayer *_Nullable layer)
         animatedView,
         _transitionDuration,
         RNSZoomDuration(screen.zoomClosePageFadeMs, RNSZoomClosePageFadeDuration),
+        screen.zoomClosePageGoneAt,
         atForT);
     _zoomRampedView = animatedView;
 
     UIViewPropertyAnimator *flight = [[UIViewPropertyAnimator alloc] initWithDuration:_transitionDuration
                                                                                 curve:UIViewAnimationCurveLinear
                                                                            animations:nil];
+    const CGFloat revealAt = screen.zoomCloseRevealAt;
     [flight addAnimations:^{
-      RNSZoomAddFlightKeyframes(standIn, revealFraction, ^(CGFloat t) {
+      RNSZoomAddFlightKeyframes(nil, 0, ^(CGFloat t) {
         const CGFloat cp = atForT(t);
+        standIn.alpha = RNSZoomCloseRevealAlpha(t, revealFraction, cp, revealAt);
         standIn.transform = RNSZoomArcLerpTransform(releasePose, slot, cp);
         dimmingView.alpha = RNSZoomDimAlphaAt(cp);
       });
