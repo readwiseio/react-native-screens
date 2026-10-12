@@ -439,6 +439,16 @@ open class ScreenViewManager :
         value: Float,
     ) = Unit
 
+    override fun setZoomClosePageGoneAt(
+        view: Screen?,
+        value: Float,
+    ) = Unit
+
+    override fun setZoomCloseRevealAt(
+        view: Screen?,
+        value: Float,
+    ) = Unit
+
     override fun setZoomCloseOvershoot(
         view: Screen?,
         value: Float,
