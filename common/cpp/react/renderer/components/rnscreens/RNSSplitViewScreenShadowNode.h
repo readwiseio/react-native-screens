@@ -4,6 +4,7 @@
 #include <react/renderer/components/rnscreens/EventEmitters.h>
 #include <react/renderer/components/rnscreens/Props.h>
 #include <react/renderer/components/view/ConcreteViewShadowNode.h>
+#include "utils/LayoutFromState.h"
 #include <react/renderer/core/LayoutContext.h>
 #include "RNSSplitViewScreenState.h"
 
@@ -18,9 +19,9 @@ using ConcreteViewShadowNodeSuperType = ConcreteViewShadowNode<
     RNSSplitViewScreenState>;
 
 class JSI_EXPORT RNSSplitViewScreenShadowNode final
-    : public ConcreteViewShadowNodeSuperType {
+    : public rnscreens::SizeFromStateShadowNode<ConcreteViewShadowNodeSuperType> {
  public:
-  using ConcreteViewShadowNode::ConcreteViewShadowNode;
+  using SizeFromStateShadowNode::SizeFromStateShadowNode;
   using StateData = ConcreteViewShadowNode::ConcreteStateData;
 
 #pragma mark - ShadowNode overrides

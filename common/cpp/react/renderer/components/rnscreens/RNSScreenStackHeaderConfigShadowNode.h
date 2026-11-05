@@ -4,6 +4,7 @@
 #include <react/renderer/components/rnscreens/EventEmitters.h>
 #include <react/renderer/components/rnscreens/Props.h>
 #include <react/renderer/components/view/ConcreteViewShadowNode.h>
+#include "utils/LayoutFromState.h"
 #include <react/renderer/core/LayoutContext.h>
 #include "FrameCorrectionModes.h"
 #include "RNSScreenStackHeaderConfigState.h"
@@ -15,13 +16,13 @@ using namespace rnscreens;
 JSI_EXPORT extern const char RNSScreenStackHeaderConfigComponentName[];
 
 class JSI_EXPORT RNSScreenStackHeaderConfigShadowNode final
-    : public ConcreteViewShadowNode<
+    : public rnscreens::SizeFromStateShadowNode<ConcreteViewShadowNode<
           RNSScreenStackHeaderConfigComponentName,
           RNSScreenStackHeaderConfigProps,
           RNSScreenStackHeaderConfigEventEmitter,
-          RNSScreenStackHeaderConfigState> {
+          RNSScreenStackHeaderConfigState>> {
  public:
-  using ConcreteViewShadowNode::ConcreteViewShadowNode;
+  using SizeFromStateShadowNode::SizeFromStateShadowNode;
   using StateData = ConcreteViewShadowNode::ConcreteStateData;
 
 #pragma mark - ShadowNode overrides

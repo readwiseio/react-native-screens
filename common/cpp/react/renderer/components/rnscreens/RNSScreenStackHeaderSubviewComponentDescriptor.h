@@ -8,6 +8,7 @@
 #include <react/renderer/components/rnscreens/utils/RectUtil.h>
 #include <react/renderer/core/ConcreteComponentDescriptor.h>
 #include "RNSScreenStackHeaderSubviewShadowNode.h"
+#include "utils/LayoutFromState.h"
 
 namespace facebook::react {
 
@@ -23,6 +24,9 @@ class RNSScreenStackHeaderSubviewComponentDescriptor final
     // Note: Be very careful with calling `shadowNode.setSize` here. By doing
     // that, you are likely to introduce a regressions on both platforms. See:
     // https://github.com/software-mansion/react-native-screens/pull/2905
+
+    rnscreens::dirtyLayoutIfFrameOriginStale(
+        static_cast<RNSScreenStackHeaderSubviewShadowNode &>(shadowNode));
 
     ConcreteComponentDescriptor::adopt(shadowNode);
   }

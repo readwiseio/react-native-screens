@@ -30,7 +30,7 @@ class RNSSplitViewScreenComponentDescriptor final
     auto stateData = state->getData();
 
     if (stateData.frameSize.width != 0 && stateData.frameSize.height != 0) {
-      layoutableShadowNode.setSize(stateData.frameSize);
+      splitViewScreenShadowNode.setSizeIfChanged(stateData.frameSize);
     }
 
     ConcreteComponentDescriptor::adopt(shadowNode);

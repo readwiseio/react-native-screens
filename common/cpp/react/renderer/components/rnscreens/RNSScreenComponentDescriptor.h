@@ -67,12 +67,12 @@ class RNSScreenComponentDescriptor final
       screenShadowNode.getFrameCorrectionModes().unset(
           FrameCorrectionModes::Mode::FrameOriginCorrection);
 
-      layoutableShadowNode.setSize(
+      screenShadowNode.setSizeIfChanged(
           Size{stateData.frameSize.width, stateData.frameSize.height});
     }
 #else
     if (stateData.frameSize.width != 0 && stateData.frameSize.height != 0) {
-      layoutableShadowNode.setSize(
+      screenShadowNode.setSizeIfChanged(
           Size{stateData.frameSize.width, stateData.frameSize.height});
     }
 #endif // ANDROID

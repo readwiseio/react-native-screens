@@ -26,6 +26,9 @@ class JSI_EXPORT RNSScreenStackHeaderSubviewShadowNode final
 #pragma mark - ShadowNode overrides
   void layout(LayoutContext layoutContext) override;
 
+  // the frame origin layout() takes from state; adopt() compares it with the layout metrics
+  Point correctFrameOrigin(Point origin) const;
+
 #pragma mark - Custom interface
   void applyFrameCorrections();
 };

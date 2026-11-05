@@ -14,9 +14,12 @@ void RNSScreenStackHeaderSubviewShadowNode::layout(
 void RNSScreenStackHeaderSubviewShadowNode::applyFrameCorrections() {
   ensureUnsealed();
 
-  const auto &stateData = getStateData();
-  layoutMetrics_.frame.origin.x = stateData.contentOffset.x;
-  layoutMetrics_.frame.origin.y = stateData.contentOffset.y;
+  layoutMetrics_.frame.origin = correctFrameOrigin(layoutMetrics_.frame.origin);
+}
+
+Point RNSScreenStackHeaderSubviewShadowNode::correctFrameOrigin(
+    Point /*origin*/) const {
+  return getStateData().contentOffset;
 }
 
 } // namespace facebook::react
