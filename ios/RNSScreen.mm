@@ -69,6 +69,7 @@ struct ContentWrapperBox {
 @end
 
 @implementation RNSScreenView {
+  BOOL _masksToBoundsBeforeTransition;
   __weak RNS_REACT_SCROLL_VIEW_COMPONENT *_sheetsScrollView;
 
   /// Up-to-date only when sheet is in `fitToContents` mode.
@@ -1585,9 +1586,34 @@ RNS_IGNORE_SUPER_CALL_END
   // Explanation taken from `reactSetFrame`, which is old arch equivalent of this code.
 }
 
+- (void)setTransitionCornerRadius:(CGFloat)transitionCornerRadius
+{
+  if (_transitionCornerRadius == 0 && transitionCornerRadius > 0) {
+    _masksToBoundsBeforeTransition = self.layer.masksToBounds;
+  }
+  _transitionCornerRadius = transitionCornerRadius;
+  if (transitionCornerRadius > 0) {
+    [self applyTransitionCornerRadius];
+  } else {
+    self.layer.cornerRadius = 0;
+    self.layer.masksToBounds = _masksToBoundsBeforeTransition;
+  }
+}
+
+- (void)applyTransitionCornerRadius
+{
+  if (_transitionCornerRadius > 0) {
+    self.layer.cornerRadius = _transitionCornerRadius;
+    self.layer.cornerCurve = kCACornerCurveContinuous;
+    self.layer.masksToBounds = YES;
+  }
+}
+
 - (void)finalizeUpdates:(RNComponentViewUpdateMask)updateMask
 {
   [super finalizeUpdates:updateMask];
+  // the base class rewrites the layer's corners on every update
+  [self applyTransitionCornerRadius];
 #if !TARGET_OS_TV && !TARGET_OS_VISION
   if (updateMask & RNComponentViewUpdateMaskProps) {
     [self updateFormSheetPresentationStyle];
