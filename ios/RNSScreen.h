@@ -69,6 +69,8 @@ namespace react = facebook::react;
 
 @property (nonatomic) BOOL fullScreenSwipeEnabled;
 @property (nonatomic) BOOL fullScreenSwipeShadowEnabled;
+// Corner radius the stack animator keeps on this screen while it slides; 0 when there is none.
+@property (nonatomic) CGFloat transitionCornerRadius;
 @property (nonatomic) BOOL gestureEnabled;
 @property (nonatomic) BOOL hasStatusBarHiddenSet;
 @property (nonatomic) BOOL hasStatusBarStyleSet;

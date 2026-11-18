@@ -27,6 +27,34 @@ static constexpr float RNSFadeCloseDelayTransitionDurationProportion = 0.1 / RNS
 // and it looks the most similar to the value used by Apple
 static constexpr float RNSShadowViewMaxAlpha = 0.1;
 
+// Since iOS 26 UIKit's own push rounds the moving screen to the display corners.
+static CGFloat RNSDisplayCornerRadius(UIView *fullScreenView)
+{
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 260000
+  if (@available(iOS 26.0, *)) {
+    UICornerConfiguration *previous = fullScreenView.cornerConfiguration;
+    fullScreenView.cornerConfiguration =
+        [UICornerConfiguration configurationWithRadius:[UICornerRadius containerConcentricRadius]];
+    CGFloat radius = [fullScreenView effectiveRadiusForCorner:UIRectCornerTopLeft];
+    fullScreenView.cornerConfiguration = previous;
+    return radius;
+  }
+#endif
+  return 0;
+}
+
+static void RNSSetTransitionCornerRadius(UIView *movingView, CGFloat radius)
+{
+  if ([movingView isKindOfClass:[RNSScreenView class]]) {
+    ((RNSScreenView *)movingView).transitionCornerRadius = radius;
+    return;
+  }
+  // a screen popped from JS is already replaced by its snapshot
+  movingView.layer.cornerRadius = radius;
+  movingView.layer.cornerCurve = kCACornerCurveContinuous;
+  movingView.layer.masksToBounds = radius > 0;
+}
+
 // Dimming applied over the screen below during the zoom transition.
 static constexpr float RNSZoomDimMaxAlpha = 0.35;
 
@@ -662,6 +690,10 @@ static void RNSZoomAddPageFadeRamp(
     shadowView.backgroundColor = [UIColor blackColor];
   }
 
+  UIView *movingView =
+      _operation == UINavigationControllerOperationPush ? toViewController.view : fromViewController.view;
+  RNSSetTransitionCornerRadius(movingView, RNSDisplayCornerRadius(transitionContext.containerView));
+
   if (_operation == UINavigationControllerOperationPush) {
     toViewController.view.transform = rightTransform;
     [[transitionContext containerView] addSubview:toViewController.view];
@@ -686,6 +718,7 @@ static void RNSZoomAddPageFadeRamp(
       if (shadowView) {
         [shadowView removeFromSuperview];
       }
+      RNSSetTransitionCornerRadius(movingView, 0);
       fromViewController.view.transform = CGAffineTransformIdentity;
       toViewController.view.transform = CGAffineTransformIdentity;
       [transitionContext completeTransition:![transitionContext transitionWasCancelled]];
@@ -712,6 +745,7 @@ static void RNSZoomAddPageFadeRamp(
       if (shadowView) {
         [shadowView removeFromSuperview];
       }
+      RNSSetTransitionCornerRadius(movingView, 0);
       fromViewController.view.transform = CGAffineTransformIdentity;
       toViewController.view.transform = CGAffineTransformIdentity;
       [transitionContext completeTransition:![transitionContext transitionWasCancelled]];
