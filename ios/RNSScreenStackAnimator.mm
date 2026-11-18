@@ -43,6 +43,18 @@ static CGFloat RNSDisplayCornerRadius(UIView *fullScreenView)
   return 0;
 }
 
+static void RNSSetTransitionCornerRadius(UIView *movingView, CGFloat radius)
+{
+  if ([movingView isKindOfClass:[RNSScreenView class]]) {
+    ((RNSScreenView *)movingView).transitionCornerRadius = radius;
+    return;
+  }
+  // a screen popped from JS is already replaced by its snapshot
+  movingView.layer.cornerRadius = radius;
+  movingView.layer.cornerCurve = kCACornerCurveContinuous;
+  movingView.layer.masksToBounds = radius > 0;
+}
+
 // Dimming applied over the screen below during the zoom transition.
 static constexpr float RNSZoomDimMaxAlpha = 0.35;
 
@@ -680,8 +692,7 @@ static void RNSZoomAddPageFadeRamp(
 
   UIView *movingView =
       _operation == UINavigationControllerOperationPush ? toViewController.view : fromViewController.view;
-  RNSScreenView *movingScreen = [movingView isKindOfClass:[RNSScreenView class]] ? (RNSScreenView *)movingView : nil;
-  movingScreen.transitionCornerRadius = RNSDisplayCornerRadius(transitionContext.containerView);
+  RNSSetTransitionCornerRadius(movingView, RNSDisplayCornerRadius(transitionContext.containerView));
 
   if (_operation == UINavigationControllerOperationPush) {
     toViewController.view.transform = rightTransform;
@@ -707,7 +718,7 @@ static void RNSZoomAddPageFadeRamp(
       if (shadowView) {
         [shadowView removeFromSuperview];
       }
-      movingScreen.transitionCornerRadius = 0;
+      RNSSetTransitionCornerRadius(movingView, 0);
       fromViewController.view.transform = CGAffineTransformIdentity;
       toViewController.view.transform = CGAffineTransformIdentity;
       [transitionContext completeTransition:![transitionContext transitionWasCancelled]];
@@ -734,7 +745,7 @@ static void RNSZoomAddPageFadeRamp(
       if (shadowView) {
         [shadowView removeFromSuperview];
       }
-      movingScreen.transitionCornerRadius = 0;
+      RNSSetTransitionCornerRadius(movingView, 0);
       fromViewController.view.transform = CGAffineTransformIdentity;
       toViewController.view.transform = CGAffineTransformIdentity;
       [transitionContext completeTransition:![transitionContext transitionWasCancelled]];
